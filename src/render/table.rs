@@ -10,6 +10,12 @@ pub fn empty() {
 }
 
 pub fn print(reports: &[Report]) {
+    print!("{}", render(reports));
+}
+
+pub fn render(reports: &[Report]) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
     let width = reports
         .iter()
         .filter_map(|report| match report {
@@ -22,12 +28,13 @@ pub fn print(reports: &[Report]) {
         .unwrap_or(0)
         .clamp(10, 28);
 
-    println!();
+    let _ = writeln!(out);
     for report in reports {
         match report {
             Report::Ok(usage) => {
                 let plan = usage.plan.as_deref().unwrap_or("-");
-                println!(
+                let _ = writeln!(
+                    out,
                     "  {}  {}  {}",
                     format!("{:<8}", usage.provider.display()).bold(),
                     usage.label.as_str().grey(),
@@ -35,12 +42,13 @@ pub fn print(reports: &[Report]) {
                 );
 
                 if usage.windows.is_empty() {
-                    println!("    {}", "no limits reported".dark_grey());
+                    let _ = writeln!(out, "    {}", "no limits reported".dark_grey());
                 }
 
                 for window in &usage.windows {
                     let painted = paint(&bar(window.used_percent), severity(window.used_percent));
-                    println!(
+                    let _ = writeln!(
+                        out,
                         "    {:<width$} {} {}  {:<11} {}",
                         truncate(&window.name, width),
                         painted,
@@ -49,7 +57,7 @@ pub fn print(reports: &[Report]) {
                         resets(window.resets_at).dark_grey()
                     );
                 }
-                println!();
+                let _ = writeln!(out);
             }
             Report::Failed {
                 provider,
@@ -57,16 +65,18 @@ pub fn print(reports: &[Report]) {
                 message,
                 ..
             } => {
-                println!(
+                let _ = writeln!(
+                    out,
                     "  {}  {}  {}",
                     format!("{:<8}", provider.display()).bold(),
                     label.as_str().grey(),
                     "failed".red()
                 );
-                println!("    {}\n", message.as_str().dark_red());
+                let _ = writeln!(out, "    {}\n", message.as_str().dark_red());
             }
         }
     }
+    out
 }
 
 fn truncate(value: &str, width: usize) -> String {
