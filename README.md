@@ -35,10 +35,44 @@ aiusg --json              # machine readable, for status lines and scripts
 aiusg watch               # live dashboard, r to refresh, q to quit
 aiusg list                # stored accounts
 aiusg remove claude:jake@example.com
+aiusg mcp                 # MCP server over stdio, for agents
 ```
 
 Multiple accounts on one provider are the point: run `aiusg login claude` once per
 account and each is stored separately, keyed by `provider:label`.
+
+## MCP server
+
+`aiusg mcp` speaks MCP over stdio, so an agent can read every account's remaining
+usage and pick which one to send work to.
+
+| Tool | What it does |
+|---|---|
+| `route` | Ranks accounts by headroom and returns the one with the most left, plus alternatives and why the rest are out (exhausted, signed out, failing) with reset times |
+| `usage` | Every account's windows — used percent, counts, reset times |
+| `accounts` | Stored accounts, without fetching usage |
+
+`route` and `usage` take an optional `provider` to scope to one of `claude`,
+`codex`, `gemini`, `copilot`, `grok`, `cursor`. Headroom is `100 -` the used
+percent of the account's most-consumed window, so the window closest to its cap
+decides the ranking. When nothing has headroom left, `route` returns a tool error
+carrying the reset times, so the caller can wait rather than retry blindly.
+
+Register it with Claude Code:
+
+```bash
+claude mcp add aiusg -- aiusg mcp
+```
+
+Or in any client that reads `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "aiusg": { "command": "aiusg", "args": ["mcp"] }
+  }
+}
+```
 
 ## Providers
 

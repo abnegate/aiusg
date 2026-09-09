@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use aiusg::cli::{Cli, Command};
-use aiusg::{app, render};
+use aiusg::{app, mcp, render};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -14,6 +14,7 @@ async fn main() -> Result<()> {
         Some(Command::Import { provider }) => app::import(provider).await,
         Some(Command::List) => app::list().await,
         Some(Command::Remove { account }) => app::remove(&account).await,
+        Some(Command::Mcp) => mcp::serve().await,
         Some(Command::Watch { interval }) => render::watch::run(interval).await,
     }
 }

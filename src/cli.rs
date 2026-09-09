@@ -55,6 +55,9 @@ pub enum Command {
         account: String,
     },
 
+    /// Run an MCP server over stdio so agents can read usage and route requests
+    Mcp,
+
     /// Live dashboard that refreshes on an interval
     Watch {
         /// Seconds between refreshes
