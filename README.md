@@ -19,6 +19,23 @@ Authenticate any number of accounts — including several on the same provider �
 
 ## Install
 
+**Homebrew** (macOS / Linux):
+
+```bash
+brew tap abnegate/tap
+brew install aiusg
+```
+
+**APT** (Debian / Ubuntu):
+
+```bash
+curl -fsSL https://abnegate.github.io/apt-repo/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/abnegate.gpg
+echo "deb [signed-by=/usr/share/keyrings/abnegate.gpg] https://abnegate.github.io/apt-repo stable main" | sudo tee /etc/apt/sources.list.d/abnegate.list
+sudo apt update && sudo apt install aiusg
+```
+
+**Binary** from [Releases](https://github.com/abnegate/aiusg/releases), or from source:
+
 ```bash
 cargo install --git https://github.com/abnegate/aiusg
 ```
@@ -161,6 +178,20 @@ provider. Use `aiusg login` for the rest.
 | `AIUSG_DEBUG` | Dump raw provider responses to stderr |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`, `GROK_HOME` | Honoured when importing |
 | `AIUSG_CURSOR_DB` | Path to Cursor's `state.vscdb`, if it is not in the default location |
+
+## Releasing
+
+Publishing a GitHub Release is the whole process. The tag sets `package.version`
+and refreshes `Cargo.lock` (committed back to `main` when the release is its
+tip), builds macOS and Linux binaries for both architectures, attaches them and
+the `.deb` packages to the release, then updates the Homebrew tap and the APT
+repo. Nothing needs bumping by hand before cutting the tag. Prerelease tags —
+any tag containing `-` — build and attach binaries but skip both publish steps.
+
+The publish jobs need four secrets on this repo: `HOMEBREW_TAP_TOKEN` and
+`APT_REPO_TOKEN` (tokens that can push to `abnegate/homebrew-tap` and
+`abnegate/apt-repo`), plus `APT_GPG_PRIVATE_KEY` and `APT_GPG_KEY_ID` for
+signing the APT `Release` file.
 
 ## Licence
 

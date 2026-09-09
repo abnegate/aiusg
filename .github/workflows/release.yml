@@ -1,0 +1,307 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+
+  prepare-release:
+    name: Prepare release version
+    needs: check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set package.version from the release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          .github/scripts/set-release-version.sh "$version"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-version
+          path: |
+            Cargo.toml
+            Cargo.lock
+
+  # GITHUB_TOKEN cannot push to a branch that requires status checks, so this
+  # uses the owner PAT. The publish jobs do not need it, so a failed bump does
+  # not hold up the release itself.
+  commit-release-version:
+    name: Commit release version
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-version
+      - name: Commit version on the default branch when this release is its tip
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          .github/scripts/commit-release-version.sh
+
+  binary:
+    name: Binary (${{ matrix.target }})
+    needs: prepare-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Secret Service
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          bin="target/${{ matrix.target }}/release/aiusg"
+          strip "$bin" || true
+          mkdir -p dist
+          name="aiusg-${{ matrix.target }}"
+          cp "$bin" "dist/$name"
+          chmod +x "dist/$name"
+          tar -C dist -czf "dist/${name}.tar.gz" "$name"
+      - name: Smoke
+        if: matrix.target != 'x86_64-apple-darwin'
+        run: ./dist/aiusg-${{ matrix.target }} --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aiusg-${{ matrix.target }}
+          path: dist/aiusg-${{ matrix.target }}*
+
+  github-release:
+    name: GitHub Release
+    needs: [prepare-release, binary]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: aiusg-*
+          merge-multiple: true
+          path: dist
+      - name: Package Debian
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          .github/scripts/package-deb.sh \
+            dist/aiusg-x86_64-unknown-linux-gnu "$VERSION" amd64 dist
+          .github/scripts/package-deb.sh \
+            dist/aiusg-aarch64-unknown-linux-gnu "$VERSION" arm64 dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum aiusg* | tee SHA256SUMS
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: dist/*
+
+  publish-homebrew:
+    name: Homebrew
+    if: ${{ !contains(github.event.release.tag_name, '-') }}
+    needs: [prepare-release, github-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download tarballs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p assets
+          gh release download "${RELEASE_TAG}" \
+            --repo "${REPO}" \
+            --pattern "aiusg-*.tar.gz" \
+            --dir assets
+      - name: Checksums
+        id: checksums
+        run: |
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu
+          do
+            key="sha256_${target//-/_}"
+            echo "${key}=$(sha256sum "assets/aiusg-${target}.tar.gz" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          done
+      - name: Generate formula
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          TAG: ${{ github.event.release.tag_name }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          SHA256_AARCH64_APPLE_DARWIN: ${{ steps.checksums.outputs.sha256_aarch64_apple_darwin }}
+          SHA256_X86_64_APPLE_DARWIN: ${{ steps.checksums.outputs.sha256_x86_64_apple_darwin }}
+          SHA256_X86_64_UNKNOWN_LINUX_GNU: ${{ steps.checksums.outputs.sha256_x86_64_unknown_linux_gnu }}
+          SHA256_AARCH64_UNKNOWN_LINUX_GNU: ${{ steps.checksums.outputs.sha256_aarch64_unknown_linux_gnu }}
+        run: |
+          sed -e "s/{{VERSION}}/${VERSION}/g" \
+              -e "s/{{TAG}}/${TAG}/g" \
+              -e "s/{{REPO_OWNER}}/${REPO_OWNER}/g" \
+              -e "s/{{SHA256_AARCH64_APPLE_DARWIN}}/${SHA256_AARCH64_APPLE_DARWIN}/g" \
+              -e "s/{{SHA256_X86_64_APPLE_DARWIN}}/${SHA256_X86_64_APPLE_DARWIN}/g" \
+              -e "s/{{SHA256_X86_64_UNKNOWN_LINUX_GNU}}/${SHA256_X86_64_UNKNOWN_LINUX_GNU}/g" \
+              -e "s/{{SHA256_AARCH64_UNKNOWN_LINUX_GNU}}/${SHA256_AARCH64_UNKNOWN_LINUX_GNU}/g" \
+              .github/formula/aiusg.rb.template > aiusg.rb
+      - name: Push to Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GH_TOKEN }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          : "${HOMEBREW_TAP_TOKEN:?set HOMEBREW_TAP_TOKEN or GH_TOKEN}"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${REPO_OWNER}/homebrew-tap.git"
+          mkdir -p homebrew-tap/Formula
+          cp aiusg.rb homebrew-tap/Formula/
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/aiusg.rb
+          if git diff --cached --quiet; then
+            echo "Formula/aiusg.rb already at ${VERSION}"
+            exit 0
+          fi
+          git commit -m "Update aiusg to ${VERSION}"
+          git push
+
+  publish-apt:
+    name: APT
+    if: ${{ !contains(github.event.release.tag_name, '-') }}
+    needs: github-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install APT repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils gnupg
+      - name: Download deb packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p debs
+          gh release download "${RELEASE_TAG}" \
+            --repo "${REPO}" \
+            --pattern "*.deb" \
+            --dir debs
+      - name: Import GPG key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+      - name: Clone APT repository
+        env:
+          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN || secrets.GH_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          : "${APT_REPO_TOKEN:?set APT_REPO_TOKEN or GH_TOKEN}"
+          git clone "https://x-access-token:${APT_REPO_TOKEN}@github.com/${REPO_OWNER}/apt-repo.git"
+      - name: Update APT repository
+        env:
+          GPG_KEY_ID: ${{ secrets.APT_GPG_KEY_ID }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir -p apt-repo/pool/main
+          cp debs/*.deb apt-repo/pool/main/
+          cd apt-repo
+          mkdir -p dists/stable/main/binary-amd64
+          mkdir -p dists/stable/main/binary-arm64
+          dpkg-scanpackages --multiversion --arch amd64 pool/ > dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages --multiversion --arch arm64 pool/ > dists/stable/main/binary-arm64/Packages
+          gzip -k -f dists/stable/main/binary-amd64/Packages
+          gzip -k -f dists/stable/main/binary-arm64/Packages
+          cd dists/stable
+          printf '%s\n' \
+            'Origin: abnegate' \
+            'Label: abnegate' \
+            'Suite: stable' \
+            'Codename: stable' \
+            'Architectures: amd64 arm64' \
+            'Components: main' \
+            'Description: APT repository for abnegate packages' \
+            > Release
+          apt-ftparchive release . >> Release
+          gpg --batch --yes --default-key "$GPG_KEY_ID" -abs -o Release.gpg Release
+          gpg --batch --yes --default-key "$GPG_KEY_ID" --clearsign -o InRelease Release
+          cd ../..
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "APT repo already has ${RELEASE_TAG}"
+            exit 0
+          fi
+          git commit -m "Add aiusg ${RELEASE_TAG}"
+          git push
