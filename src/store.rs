@@ -94,10 +94,6 @@ impl Store {
         })
     }
 
-    pub fn backend(&self) -> Backend {
-        self.backend
-    }
-
     fn manifest_path(&self) -> PathBuf {
         self.directory.join(ACCOUNTS_FILE)
     }

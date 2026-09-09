@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -152,16 +152,6 @@ impl Window {
         self
     }
 
-    pub fn resetting_in(self, duration: Option<Duration>) -> Self {
-        let resets_at = duration.map(|duration| Utc::now() + duration);
-        self.resetting_at(resets_at)
-    }
-
-    pub fn remaining_percent(&self) -> Option<f64> {
-        self.used_percent
-            .map(|used| (100.0 - used).clamp(0.0, 100.0))
-    }
-
     pub fn is_exhausted(&self) -> bool {
         self.used_percent.is_some_and(|used| used >= 100.0)
     }
@@ -175,19 +165,6 @@ pub struct Usage {
     pub plan: Option<String>,
     pub windows: Vec<Window>,
     pub fetched_at: DateTime<Utc>,
-}
-
-impl Usage {
-    pub fn tightest(&self) -> Option<&Window> {
-        self.windows
-            .iter()
-            .filter(|window| window.used_percent.is_some())
-            .max_by(|left, right| {
-                left.used_percent
-                    .unwrap_or(0.0)
-                    .total_cmp(&right.used_percent.unwrap_or(0.0))
-            })
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -253,12 +230,6 @@ mod tests {
     }
 
     #[test]
-    fn remaining_never_goes_negative() {
-        let window = Window::from_count("Premium", 1506, 1500);
-        assert_eq!(window.remaining_percent(), Some(0.0));
-    }
-
-    #[test]
     fn providers_round_trip_through_their_slug() {
         for provider in Provider::ALL {
             let parsed: Provider = provider.slug().parse().expect("slug should parse");
@@ -290,25 +261,5 @@ mod tests {
         assert!(AccountId::from_display("claude").is_none());
         assert!(AccountId::from_display("claude:").is_none());
         assert!(AccountId::from_display("bogus:label").is_none());
-    }
-
-    #[test]
-    fn tightest_window_is_the_most_used() {
-        let usage = Usage {
-            account: AccountId::new(Provider::Codex, "a"),
-            provider: Provider::Codex,
-            label: "a".to_owned(),
-            plan: None,
-            windows: vec![
-                Window::from_percent("5h", 12.0),
-                Window::from_percent("7d", 91.0),
-                Window::from_percent("unknown", 0.0),
-            ],
-            fetched_at: Utc::now(),
-        };
-        assert_eq!(
-            usage.tightest().map(|window| window.name.as_str()),
-            Some("7d")
-        );
     }
 }
