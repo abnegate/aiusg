@@ -1,0 +1,53 @@
+[package]
+name = "aiusg"
+version = "0.1.0"
+edition = "2024"
+description = "One place to see usage limits and reset times across all your AI provider accounts"
+license = "MIT"
+repository = "https://github.com/abnegate/aiusg"
+readme = "README.md"
+keywords = ["claude", "codex", "copilot", "usage", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.88"
+
+[[bin]]
+name = "aiusg"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.6", features = ["derive"] }
+crossterm = "0.29.0"
+dirs = "7.0.0"
+futures = "0.3.34"
+keyring = "4.2.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls", "gzip", "http2", "charset", "system-proxy"] }
+rand = "0.10.2"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "sync", "time"] }
+url = "2.5.8"
+webbrowser = "1.2.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "4.2.0", features = ["apple-native-keyring-store"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "4.2.0", features = ["windows-native-keyring-store"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "4.2.0", features = ["dbus-secret-service-keyring-store"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
