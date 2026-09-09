@@ -188,10 +188,11 @@ the `.deb` packages to the release, then updates the Homebrew tap and the APT
 repo. Nothing needs bumping by hand before cutting the tag. Prerelease tags —
 any tag containing `-` — build and attach binaries but skip both publish steps.
 
-The publish jobs need four secrets on this repo: `HOMEBREW_TAP_TOKEN` and
-`APT_REPO_TOKEN` (tokens that can push to `abnegate/homebrew-tap` and
-`abnegate/apt-repo`), plus `APT_GPG_PRIVATE_KEY` and `APT_GPG_KEY_ID` for
-signing the APT `Release` file.
+The publish jobs need four secrets on this repo: `HOMEBREW_TAP_DEPLOY_KEY` and
+`APT_REPO_DEPLOY_KEY`, write deploy keys for `abnegate/homebrew-tap` and
+`abnegate/apt-repo`, plus `APT_GPG_PRIVATE_KEY` and `APT_GPG_KEY_ID` for signing
+the APT `Release` file. Deploy keys rather than a personal access token: each
+one reaches exactly one repository and never expires.
 
 ## Licence
 

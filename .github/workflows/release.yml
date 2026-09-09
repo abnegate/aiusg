@@ -216,12 +216,17 @@ jobs:
               .github/formula/aiusg.rb.template > aiusg.rb
       - name: Push to Homebrew tap
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GH_TOKEN }}
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           VERSION: ${{ needs.prepare-release.outputs.version }}
           REPO_OWNER: ${{ github.repository_owner }}
         run: |
-          : "${HOMEBREW_TAP_TOKEN:?set HOMEBREW_TAP_TOKEN or GH_TOKEN}"
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${REPO_OWNER}/homebrew-tap.git"
+          : "${DEPLOY_KEY:?set HOMEBREW_TAP_DEPLOY_KEY}"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/tap"
+          chmod 600 "$HOME/.ssh/tap"
+          ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/tap -o IdentitiesOnly=yes"
+          git clone --depth 1 "git@github.com:${REPO_OWNER}/homebrew-tap.git"
           mkdir -p homebrew-tap/Formula
           cp aiusg.rb homebrew-tap/Formula/
           cd homebrew-tap
@@ -263,11 +268,17 @@ jobs:
           echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
       - name: Clone APT repository
         env:
-          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN || secrets.GH_TOKEN }}
+          DEPLOY_KEY: ${{ secrets.APT_REPO_DEPLOY_KEY }}
           REPO_OWNER: ${{ github.repository_owner }}
         run: |
-          : "${APT_REPO_TOKEN:?set APT_REPO_TOKEN or GH_TOKEN}"
-          git clone "https://x-access-token:${APT_REPO_TOKEN}@github.com/${REPO_OWNER}/apt-repo.git"
+          : "${DEPLOY_KEY:?set APT_REPO_DEPLOY_KEY}"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/apt"
+          chmod 600 "$HOME/.ssh/apt"
+          ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          ssh_command="ssh -i $HOME/.ssh/apt -o IdentitiesOnly=yes"
+          GIT_SSH_COMMAND="$ssh_command" git clone --depth 1 "git@github.com:${REPO_OWNER}/apt-repo.git"
+          git -C apt-repo config core.sshCommand "$ssh_command"
       - name: Update APT repository
         env:
           GPG_KEY_ID: ${{ secrets.APT_GPG_KEY_ID }}
