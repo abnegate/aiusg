@@ -26,6 +26,10 @@ pub struct StatusArgs {
     /// Emit JSON instead of a table
     #[arg(long)]
     pub json: bool,
+
+    /// Include accounts that are signed out
+    #[arg(short, long)]
+    pub all: bool,
 }
 
 #[derive(Debug, Subcommand)]

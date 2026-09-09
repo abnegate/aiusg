@@ -50,7 +50,7 @@ async fn tick(store: &Store, interval: Duration) -> Result<()> {
             write!(
                 stdout(),
                 "{}{}",
-                table::render(&reports).replace('\n', "\r\n"),
+                table::render(&reports, false).replace('\n', "\r\n"),
                 footer.dark_grey()
             )?;
             stdout().flush()?;

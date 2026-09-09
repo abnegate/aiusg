@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod codex;
 pub mod copilot;
+pub mod cursor;
 pub mod gemini;
 pub mod grok;
 
@@ -9,6 +10,10 @@ use serde::de::DeserializeOwned;
 
 use crate::model::{Account, Provider, Window};
 use crate::store::Credential;
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct SignedOut(pub String);
 
 pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &str) -> Result<T> {
     let status = response.status();
@@ -19,6 +24,9 @@ pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &
 
     if std::env::var_os("AIUSG_DEBUG").is_some() {
         eprintln!("[aiusg] {what} -> HTTP {status}\n{body}\n");
+    }
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(SignedOut(format!("{what} rejected the stored credential")).into());
     }
     if !status.is_success() {
         bail!("{what} request failed: HTTP {status}");
@@ -49,6 +57,7 @@ pub async fn fetch(
         Provider::Gemini => gemini::fetch(http, credential).await,
         Provider::Copilot => copilot::fetch(http, credential).await,
         Provider::Grok => grok::fetch(http, credential).await,
+        Provider::Cursor => cursor::fetch(http, credential).await,
     }
 }
 
@@ -59,6 +68,7 @@ pub async fn login(provider: Provider, http: &reqwest::Client) -> Result<Discove
         Provider::Gemini => gemini::login(http).await,
         Provider::Copilot => copilot::login(http).await,
         Provider::Grok => grok::login(http).await,
+        Provider::Cursor => cursor::login(http).await,
     }
 }
 
@@ -73,6 +83,7 @@ pub async fn refresh(
         Provider::Gemini => gemini::refresh(http, credential).await,
         Provider::Copilot => Ok(None),
         Provider::Grok => grok::refresh(http, credential).await,
+        Provider::Cursor => cursor::refresh(http, credential).await,
     }
 }
 
@@ -83,5 +94,6 @@ pub fn discover(provider: Provider) -> Result<Vec<Discovered>> {
         Provider::Gemini => gemini::discover(),
         Provider::Copilot => copilot::discover(),
         Provider::Grok => grok::discover(),
+        Provider::Cursor => cursor::discover(),
     }
 }

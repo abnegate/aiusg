@@ -30,6 +30,7 @@ aiusg import              # adopt accounts already signed in to their CLI
 aiusg login claude        # or sign in directly — repeat for each account
 aiusg                     # show every account
 aiusg --provider claude   # just one provider
+aiusg --all               # include accounts that are signed out
 aiusg --json              # machine readable, for status lines and scripts
 aiusg watch               # live dashboard, r to refresh, q to quit
 aiusg list                # stored accounts
@@ -48,6 +49,7 @@ account and each is stored separately, keyed by `provider:label`.
 | Copilot | `GET api.github.com/copilot_internal/user` | Premium request quota, used/entitlement, monthly reset |
 | Gemini | `POST cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` | Per-model remaining requests and reset time (needs an OAuth client, below) |
 | Grok | `GET cli-chat-proxy.grok.com/v1/billing?format=credits` | Credit usage per product, billing period reset |
+| Cursor | `GET cursor.com/api/usage-summary` | Included and on-demand usage, billing cycle reset |
 
 Reading usage never spends quota — every endpoint above is a plain read.
 
@@ -66,6 +68,20 @@ export AIUSG_GEMINI_CLIENT_SECRET=...
 Create a **Desktop app** OAuth client in a Google Cloud project with the Gemini
 for Cloud API enabled, or reuse the public installed-app client that the
 `gemini-cli` project publishes in its own source.
+
+### Signed-out accounts are hidden
+
+An account whose token has expired and cannot be refreshed is dropped from the
+table, with a one-line count at the bottom rather than a failure row for
+something you already know about. `aiusg --all` shows them; `--json` always
+includes them, each tagged with a `status` of `ok`, `signed_out` or `failed`.
+
+### Cursor is import-only
+
+Cursor has no CLI sign-in flow to drive, so `aiusg login cursor` reads the
+session the Cursor app already holds in its `state.vscdb` — sign in to Cursor
+first. Its token lasts about three months and renews the same way. Point
+`AIUSG_CURSOR_DB` at the database to override where it is read from.
 
 ## Where credentials live
 
@@ -110,6 +126,7 @@ provider. Use `aiusg login` for the rest.
 | `AIUSG_KEYCHAIN` | Set to `1` to store tokens in the OS keychain instead of a `0600` file |
 | `AIUSG_DEBUG` | Dump raw provider responses to stderr |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`, `GROK_HOME` | Honoured when importing |
+| `AIUSG_CURSOR_DB` | Path to Cursor's `state.vscdb`, if it is not in the default location |
 
 ## Licence
 

@@ -12,15 +12,17 @@ pub enum Provider {
     Gemini,
     Copilot,
     Grok,
+    Cursor,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 5] = [
+    pub const ALL: [Provider; 6] = [
         Provider::Claude,
         Provider::Codex,
         Provider::Gemini,
         Provider::Copilot,
         Provider::Grok,
+        Provider::Cursor,
     ];
 
     pub fn slug(self) -> &'static str {
@@ -30,6 +32,7 @@ impl Provider {
             Provider::Gemini => "gemini",
             Provider::Copilot => "copilot",
             Provider::Grok => "grok",
+            Provider::Cursor => "cursor",
         }
     }
 
@@ -40,6 +43,7 @@ impl Provider {
             Provider::Gemini => "Gemini",
             Provider::Copilot => "Copilot",
             Provider::Grok => "Grok",
+            Provider::Cursor => "Cursor",
         }
     }
 }
@@ -62,7 +66,7 @@ impl FromStr for Provider {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("unknown provider '{0}' (expected one of: claude, codex, gemini, copilot, grok)")]
+#[error("unknown provider '{0}' (expected one of: claude, codex, gemini, copilot, grok, cursor)")]
 pub struct ProviderParseError(pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -171,6 +175,12 @@ pub struct Usage {
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Report {
     Ok(Usage),
+    #[serde(rename = "signed_out")]
+    SignedOut {
+        account: AccountId,
+        provider: Provider,
+        label: String,
+    },
     Failed {
         account: AccountId,
         provider: Provider,
@@ -180,25 +190,22 @@ pub enum Report {
 }
 
 impl Report {
-    pub fn account(&self) -> &AccountId {
-        match self {
-            Report::Ok(usage) => &usage.account,
-            Report::Failed { account, .. } => account,
-        }
-    }
-
     pub fn provider(&self) -> Provider {
         match self {
             Report::Ok(usage) => usage.provider,
-            Report::Failed { provider, .. } => *provider,
+            Report::SignedOut { provider, .. } | Report::Failed { provider, .. } => *provider,
         }
     }
 
     pub fn label(&self) -> &str {
         match self {
             Report::Ok(usage) => &usage.label,
-            Report::Failed { label, .. } => label,
+            Report::SignedOut { label, .. } | Report::Failed { label, .. } => label,
         }
+    }
+
+    pub fn is_signed_out(&self) -> bool {
+        matches!(self, Report::SignedOut { .. })
     }
 }
 

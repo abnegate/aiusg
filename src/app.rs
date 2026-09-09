@@ -36,6 +36,11 @@ pub async fn collect(store: &Store, provider: Option<Provider>) -> Result<Vec<Re
 async fn report_for(store: &Store, http: &reqwest::Client, account: &Account) -> Report {
     match usage_for(store, http, account).await {
         Ok(usage) => Report::Ok(usage),
+        Err(error) if error.downcast_ref::<provider::SignedOut>().is_some() => Report::SignedOut {
+            account: account.id.clone(),
+            provider: account.provider,
+            label: account.label.clone(),
+        },
         Err(error) => Report::Failed {
             account: account.id.clone(),
             provider: account.provider,
@@ -81,16 +86,12 @@ async fn ensure_fresh(
             Ok(refreshed)
         }
         Ok(None) => Ok(credential),
-        Err(error) => {
-            if credential.is_expired() {
-                Err(error.context(format!(
-                    "the stored token expired; run `aiusg login {}` to sign in again",
-                    account.provider.slug()
-                )))
-            } else {
-                Ok(credential)
-            }
-        }
+        Err(_) if credential.is_expired() => Err(provider::SignedOut(format!(
+            "the stored token expired and could not be refreshed for {}",
+            account.id
+        ))
+        .into()),
+        Err(_) => Ok(credential),
     }
 }
 
@@ -105,7 +106,7 @@ pub async fn status(args: StatusArgs) -> Result<()> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&reports)?);
     } else {
-        render::table::print(&reports);
+        render::table::print(&reports, args.all);
     }
     Ok(())
 }
