@@ -43,7 +43,7 @@ account and each is stored separately, keyed by `provider:label`.
 
 | Provider | Source | What you get |
 |---|---|---|
-| Claude | `GET api.anthropic.com/api/oauth/usage` | 5h and 7d windows, per-model 7d windows, extra usage credits |
+| Claude | `GET api.anthropic.com/api/oauth/usage` | Session and weekly windows from `limits[]`, including per-model ones, plus extra usage credits |
 | Codex | `GET chatgpt.com/backend-api/wham/usage` | Primary and secondary windows plus per-model buckets, with reset times |
 | Copilot | `GET api.github.com/copilot_internal/user` | Premium request quota, used/entitlement, monthly reset |
 | Gemini | `POST cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` | Per-model remaining requests and reset time (needs an OAuth client, below) |

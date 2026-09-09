@@ -15,7 +15,8 @@ const DEFAULT_BASE: &str = "https://cli-chat-proxy.grok.com/v1";
 const AUTHORIZE_URL: &str = "https://auth.x.ai/oauth2/authorize";
 const TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
 const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
-const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access billing:read";
+const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access \
+     conversations:read conversations:write workspaces:read workspaces:write";
 const CALLBACK_PORTS: [u16; 4] = [8111, 8112, 8113, 0];
 const TOKEN_AUTH: &str = "xai-grok-cli";
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"));
@@ -416,5 +417,42 @@ mod tests {
         assert_eq!(windows[0].used, Some(250));
         assert_eq!(windows[0].limit, Some(1000));
         assert_eq!(windows[0].used_percent, Some(25.0));
+    }
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::SCOPES;
+
+    #[test]
+    fn scopes_are_a_single_spaced_list() {
+        assert!(
+            !SCOPES.contains("  "),
+            "line continuation left a double space: {SCOPES:?}"
+        );
+        assert!(
+            !SCOPES.contains('\n'),
+            "scopes must be one line: {SCOPES:?}"
+        );
+        assert_eq!(
+            SCOPES.split(' ').count(),
+            10,
+            "expected ten scopes in {SCOPES:?}"
+        );
+    }
+
+    #[test]
+    fn billing_read_is_not_requested() {
+        assert!(
+            !SCOPES.contains("billing"),
+            "the Grok CLI client is not allowed billing scopes"
+        );
+    }
+
+    #[test]
+    fn keeps_the_scopes_the_billing_endpoint_needs() {
+        for scope in ["offline_access", "grok-cli:access", "api:access"] {
+            assert!(SCOPES.contains(scope), "{scope} is required");
+        }
     }
 }

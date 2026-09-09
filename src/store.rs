@@ -79,10 +79,19 @@ impl Store {
     pub fn open() -> Result<Self> {
         let directory = match std::env::var_os("AIUSG_HOME") {
             Some(path) => PathBuf::from(path),
-            None => dirs::config_dir()
-                .context("could not determine a config directory")?
-                .join("aiusg"),
+            None => default_directory()?,
         };
+        if !directory.exists()
+            && let Some(previous) = legacy_directory().filter(|path| path.exists())
+        {
+            if let Some(parent) = directory.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            fs::rename(&previous, &directory).with_context(|| {
+                format!("moving {} to {}", previous.display(), directory.display())
+            })?;
+        }
         fs::create_dir_all(&directory)
             .with_context(|| format!("creating {}", directory.display()))?;
         restrict(&directory)?;
@@ -220,6 +229,34 @@ impl Store {
             .await
             .context("storing a credential")?
     }
+}
+
+#[cfg(unix)]
+fn default_directory() -> Result<PathBuf> {
+    let base = match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => dirs::home_dir()
+            .context("could not determine a home directory")?
+            .join(".config"),
+    };
+    Ok(base.join("aiusg"))
+}
+
+#[cfg(not(unix))]
+fn default_directory() -> Result<PathBuf> {
+    Ok(dirs::config_dir()
+        .context("could not determine a config directory")?
+        .join("aiusg"))
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_directory() -> Option<PathBuf> {
+    dirs::config_dir().map(|path| path.join("aiusg"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn legacy_directory() -> Option<PathBuf> {
+    None
 }
 
 fn read_json<T: Default + serde::de::DeserializeOwned>(path: &Path) -> Result<T> {

@@ -20,11 +20,11 @@ pub struct Cli {
 #[derive(Debug, Clone, clap::Args)]
 pub struct StatusArgs {
     /// Only show accounts for this provider
-    #[arg(short, long, global = true)]
+    #[arg(short, long)]
     pub provider: Option<Provider>,
 
     /// Emit JSON instead of a table
-    #[arg(long, global = true)]
+    #[arg(long)]
     pub json: bool,
 }
 
