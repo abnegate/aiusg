@@ -55,7 +55,7 @@ struct Bucket {
 }
 
 impl Bucket {
-    fn into_window(self, name: &str) -> Option<Window> {
+    fn to_window(&self, name: &str) -> Option<Window> {
         if !self.enabled {
             return None;
         }
@@ -63,8 +63,20 @@ impl Bucket {
             let limit = self.limit.filter(|limit| *limit > 0.0)?;
             Some((self.used? / limit) * 100.0)
         })?;
-        Some(Window::from_percent(name, percent))
+
+        let mut window = match (self.used, self.limit) {
+            (Some(used), Some(limit)) if limit > 0.0 => {
+                Window::from_count(name, dollars(used), dollars(limit))
+            }
+            _ => Window::from_percent(name, percent),
+        };
+        window.used_percent = Some(percent);
+        Some(window)
     }
+}
+
+fn dollars(cents: f64) -> u64 {
+    (cents.max(0.0) / 100.0).round() as u64
 }
 
 fn windows(summary: &UsageSummary) -> Vec<Window> {
@@ -82,14 +94,9 @@ fn windows(summary: &UsageSummary) -> Vec<Window> {
     .into_iter()
     .flatten()
     .filter_map(|(bucket, name)| {
-        Bucket {
-            enabled: bucket.enabled,
-            used: bucket.used,
-            limit: bucket.limit,
-            total_percent_used: bucket.total_percent_used,
-        }
-        .into_window(name)
-        .map(|window| window.resetting_at(summary.billing_cycle_end))
+        bucket
+            .to_window(name)
+            .map(|window| window.resetting_at(summary.billing_cycle_end))
     })
     .collect()
 }
@@ -169,6 +176,15 @@ fn database() -> Option<PathBuf> {
     )
 }
 
+fn decode(bytes: &[u8]) -> String {
+    let (pairs, rest) = bytes.as_chunks::<2>();
+    if !pairs.is_empty() && rest.is_empty() && bytes[1] == 0 {
+        let units: Vec<u16> = pairs.iter().copied().map(u16::from_le_bytes).collect();
+        return String::from_utf16_lossy(&units);
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
 pub fn discover() -> Result<Vec<Discovered>> {
     let Some(path) = database().filter(|path| path.exists()) else {
         return Ok(Vec::new());
@@ -184,6 +200,7 @@ pub fn discover() -> Result<Vec<Discovered>> {
         connection
             .query_row("select value from ItemTable where key = ?1", [key], |row| {
                 row.get::<_, String>(0)
+                    .or_else(|_| row.get::<_, Vec<u8>>(0).map(|bytes| decode(&bytes)))
             })
             .ok()
             .filter(|value| !value.is_empty())
@@ -242,6 +259,40 @@ mod tests {
             windows[0].resets_at.is_some(),
             "reset comes from billingCycleEnd"
         );
+    }
+
+    #[test]
+    fn amounts_are_cents_and_render_as_dollars() {
+        let summary: UsageSummary = serde_json::from_str(LIVE).unwrap();
+        let windows = windows(&summary);
+        assert_eq!(windows[0].used, Some(400), "40000 cents is $400");
+        assert_eq!(windows[0].limit, Some(400));
+    }
+
+    #[test]
+    fn the_reported_percentage_wins_over_the_ratio() {
+        let summary: UsageSummary = serde_json::from_str(
+            r#"{"individualUsage":{"plan":{"enabled":true,"used":5000,"limit":40000,"totalPercentUsed":97}}}"#,
+        )
+        .unwrap();
+        let windows = windows(&summary);
+        assert_eq!(
+            windows[0].used_percent,
+            Some(97.0),
+            "totalPercentUsed accounts for spend the included bucket does not show"
+        );
+        assert_eq!(
+            windows[0].used,
+            Some(50),
+            "counts come from the cents fields"
+        );
+    }
+
+    #[test]
+    fn utf16_blob_values_decode() {
+        let utf16: Vec<u8> = "ultra".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode(&utf16), "ultra");
+        assert_eq!(decode(b"ultra"), "ultra", "plain utf-8 text still decodes");
     }
 
     #[test]
