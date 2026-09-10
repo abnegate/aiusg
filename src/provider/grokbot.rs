@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 
@@ -18,6 +18,7 @@ const ACCESS_TOKEN_KEY: &str = "cursor-access-token";
 const REFRESH_TOKEN_KEY: &str = "cursor-refresh-token";
 const TEAM_ID_KEY: &str = "cursor-selected-team-id";
 const PLAINTEXT: &str = "plaintext:v1:";
+const ACCOUNT_KEY: &str = "account";
 const TEAM_ID: &str = "team_id";
 const WINDOW: &str = "Included usage";
 
@@ -93,12 +94,20 @@ pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
 
 pub async fn refresh(
     _http: &reqwest::Client,
-    _credential: &Credential,
+    credential: &Credential,
 ) -> Result<Option<Credential>> {
-    match discover()?.into_iter().next() {
-        Some(found) => Ok(Some(found.credential)),
-        None => bail!("sign in to the Grok Bot app again to renew the session"),
-    }
+    Ok(Some(refreshed_credential(credential, discover()?)))
+}
+
+fn refreshed_credential(credential: &Credential, sessions: Vec<Discovered>) -> Credential {
+    let Some(account) = credential.get(ACCOUNT_KEY) else {
+        return credential.clone();
+    };
+    sessions
+        .into_iter()
+        .find(|found| found.credential.get(ACCOUNT_KEY) == Some(account))
+        .map(|found| found.credential)
+        .unwrap_or_else(|| credential.clone())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -145,7 +154,7 @@ fn credentials(secrets: Secrets) -> Vec<Credential> {
         let Some(values) = secrets.accounts.get(&scope) else {
             continue;
         };
-        seen.push(scope);
+        seen.push(scope.clone());
 
         let Some(access_token) = values
             .get(ACCESS_TOKEN_KEY)
@@ -162,7 +171,8 @@ fn credentials(secrets: Secrets) -> Vec<Credential> {
                 .map(str::to_owned),
             expires_at: expiry(access_token),
             extra: Default::default(),
-        };
+        }
+        .with(ACCOUNT_KEY, scope);
         if let Some(team) = values.get(TEAM_ID_KEY).and_then(|value| readable(value)) {
             credential = credential.with(TEAM_ID, team.to_owned());
         }
@@ -288,6 +298,7 @@ mod tests {
         assert_eq!(credentials[0].access_token, "token-two");
         assert_eq!(credentials[0].refresh_token.as_deref(), Some("refresh-two"));
         assert_eq!(credentials[0].get(TEAM_ID), Some("42"));
+        assert_eq!(credentials[0].get(ACCOUNT_KEY), Some("two"));
     }
 
     #[test]
@@ -305,5 +316,39 @@ mod tests {
             .map(|credential| credential.access_token)
             .collect();
         assert_eq!(tokens, ["second", "first"]);
+    }
+
+    #[test]
+    fn refresh_uses_the_matching_account_session() {
+        let stored = Credential::bearer("stored").with(ACCOUNT_KEY, "second");
+        let sessions = [
+            Credential::bearer("first").with(ACCOUNT_KEY, "first"),
+            Credential::bearer("second").with(ACCOUNT_KEY, "second"),
+        ]
+        .into_iter()
+        .map(|credential| Discovered {
+            account: Account::new(Provider::GrokBot, "grokbot", None),
+            credential,
+        })
+        .collect();
+
+        assert_eq!(
+            refreshed_credential(&stored, sessions).access_token,
+            "second"
+        );
+    }
+
+    #[test]
+    fn refresh_preserves_the_stored_credential_without_a_matching_session() {
+        let stored = Credential::bearer("stored").with(ACCOUNT_KEY, "missing");
+        let sessions = vec![Discovered {
+            account: Account::new(Provider::GrokBot, "grokbot", None),
+            credential: Credential::bearer("other").with(ACCOUNT_KEY, "other"),
+        }];
+
+        assert_eq!(
+            refreshed_credential(&stored, sessions).access_token,
+            "stored"
+        );
     }
 }
