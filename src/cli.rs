@@ -33,6 +33,18 @@ pub struct StatusArgs {
     #[arg(short, long)]
     pub all: bool,
 
+    /// Order accounts by ORDER instead of by provider
+    #[arg(
+        short,
+        long,
+        value_enum,
+        value_name = "ORDER",
+        num_args = 0..=1,
+        default_value_t = Sort::Provider,
+        default_missing_value = "usable"
+    )]
+    pub sort: Sort,
+
     /// Keep the dashboard on screen, refreshing every SECONDS
     #[arg(
         short,
@@ -47,6 +59,15 @@ pub struct StatusArgs {
         conflicts_with = "json"
     )]
     pub watch: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum Sort {
+    /// Group by provider, as stored
+    #[default]
+    Provider,
+    /// Most usable right now first: most headroom, then soonest back
+    Usable,
 }
 
 #[derive(Debug, Subcommand)]
@@ -133,6 +154,41 @@ mod tests {
             };
             assert_eq!(args.watch, Some(5));
         }
+    }
+
+    #[test]
+    fn sorting_follows_the_stored_order_by_default() {
+        assert_eq!(parse(&["aiusg"]).status.sort, Sort::Provider);
+    }
+
+    #[test]
+    fn sorting_by_what_is_usable_takes_the_value_or_stands_alone() {
+        for args in [
+            ["aiusg", "--sort"].as_slice(),
+            ["aiusg", "-s"].as_slice(),
+            ["aiusg", "--sort", "usable"].as_slice(),
+            ["aiusg", "--sort=usable"].as_slice(),
+            ["aiusg", "-s", "usable"].as_slice(),
+        ] {
+            assert_eq!(parse(args).status.sort, Sort::Usable, "for {args:?}");
+        }
+    }
+
+    #[test]
+    fn watching_takes_an_order_too() {
+        let cli = parse(&["aiusg", "--watch", "10", "--sort", "usable"]);
+        assert_eq!(cli.status.watch, Some(10));
+        assert_eq!(cli.status.sort, Sort::Usable);
+
+        let Some(Command::Watch(args)) = parse(&["aiusg", "watch", "--sort"]).command else {
+            panic!("expected the watch subcommand");
+        };
+        assert_eq!(args.sort, Sort::Usable);
+    }
+
+    #[test]
+    fn an_unknown_order_is_rejected() {
+        assert!(Cli::try_parse_from(["aiusg", "--sort", "sideways"]).is_err());
     }
 
     #[test]

@@ -156,7 +156,7 @@ fn routing(reports: &[Report]) -> Routing {
                         provider: candidate.provider,
                         label: candidate.label,
                         reason: "exhausted".to_owned(),
-                        resets_at: candidate.resets_at,
+                        resets_at: usage.usable_at(),
                     });
                 }
             }
@@ -202,24 +202,14 @@ fn routing(reports: &[Report]) -> Routing {
 }
 
 fn candidate(usage: &Usage) -> Candidate {
-    let limiting = usage
-        .windows
-        .iter()
-        .filter(|window| window.used_percent.is_some())
-        .max_by(|left, right| {
-            left.used_percent
-                .unwrap_or(0.0)
-                .total_cmp(&right.used_percent.unwrap_or(0.0))
-        });
+    let limiting = usage.limiting_window();
 
     Candidate {
         account: usage.account.as_str().to_owned(),
         provider: usage.provider,
         label: usage.label.clone(),
         plan: usage.plan.clone(),
-        headroom_percent: limiting
-            .and_then(|window| window.used_percent)
-            .map_or(100.0, |used| 100.0 - used),
+        headroom_percent: usage.headroom(),
         limiting_window: limiting.map(|window| window.name.clone()),
         resets_at: limiting.and_then(|window| window.resets_at),
     }
@@ -281,6 +271,29 @@ mod tests {
         let routing = routing(&reports);
         assert!(routing.chosen.is_none());
         assert_eq!(routing.unavailable[0].reason, "exhausted");
+    }
+
+    #[test]
+    fn an_exhausted_account_reports_when_every_spent_window_is_back() {
+        let now = Utc::now();
+        let reports = vec![usage(
+            "spent@example.com",
+            vec![
+                Window::from_percent("Session", 150.0)
+                    .resetting_at(Some(now + chrono::Duration::hours(1))),
+                Window::from_percent("Weekly", 100.0)
+                    .resetting_at(Some(now + chrono::Duration::days(3))),
+            ],
+        )];
+
+        let routing = routing(&reports);
+        let waiting = &routing.unavailable[0];
+        assert_eq!(waiting.reason, "exhausted");
+        assert_eq!(
+            waiting.resets_at,
+            Some(now + chrono::Duration::days(3)),
+            "the caller waits on this, and the account is not back until every spent window is"
+        );
     }
 
     #[test]

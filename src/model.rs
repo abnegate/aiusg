@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
@@ -177,6 +178,34 @@ pub struct Usage {
     pub fetched_at: DateTime<Utc>,
 }
 
+impl Usage {
+    pub fn limiting_window(&self) -> Option<&Window> {
+        self.windows
+            .iter()
+            .filter(|window| window.used_percent.is_some())
+            .max_by(|left, right| {
+                left.used_percent
+                    .unwrap_or(0.0)
+                    .total_cmp(&right.used_percent.unwrap_or(0.0))
+            })
+    }
+
+    pub fn headroom(&self) -> f64 {
+        self.limiting_window()
+            .and_then(|window| window.used_percent)
+            .map_or(100.0, |used| 100.0 - used)
+    }
+
+    pub fn usable_at(&self) -> Option<DateTime<Utc>> {
+        let mut latest: Option<DateTime<Utc>> = None;
+        for window in self.windows.iter().filter(|window| window.is_exhausted()) {
+            let resets_at = window.resets_at?;
+            latest = Some(latest.map_or(resets_at, |current| current.max(resets_at)));
+        }
+        latest
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Report {
@@ -213,11 +242,213 @@ impl Report {
     pub fn is_signed_out(&self) -> bool {
         matches!(self, Report::SignedOut { .. })
     }
+
+    pub fn usability(&self) -> Usability {
+        match self {
+            Report::Ok(usage) => {
+                let headroom = usage.headroom();
+                if headroom > 0.0 {
+                    Usability::Available { headroom }
+                } else {
+                    Usability::Exhausted {
+                        usable_at: usage.usable_at(),
+                    }
+                }
+            }
+            Report::Failed { .. } => Usability::Failing,
+            Report::SignedOut { .. } => Usability::SignedOut,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Usability {
+    Available { headroom: f64 },
+    Exhausted { usable_at: Option<DateTime<Utc>> },
+    Failing,
+    SignedOut,
+}
+
+impl Usability {
+    fn tier(self) -> u8 {
+        match self {
+            Usability::Available { .. } => 0,
+            Usability::Exhausted { .. } => 1,
+            Usability::Failing => 2,
+            Usability::SignedOut => 3,
+        }
+    }
+}
+
+impl Ord for Usability {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Usability::Available { headroom: left }, Usability::Available { headroom: right }) => {
+                right.total_cmp(left)
+            }
+            (
+                Usability::Exhausted { usable_at: left },
+                Usability::Exhausted { usable_at: right },
+            ) => match (left, right) {
+                (Some(left), Some(right)) => left.cmp(right),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            },
+            _ => self.tier().cmp(&other.tier()),
+        }
+    }
+}
+
+impl PartialOrd for Usability {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Usability {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Usability {}
+
+pub fn rank(reports: &mut [Report]) {
+    reports.sort_by_key(|report| report.usability());
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::Duration;
+
     use super::*;
+
+    fn usage(label: &str, windows: Vec<Window>) -> Report {
+        Report::Ok(Usage {
+            account: AccountId::new(Provider::Claude, label),
+            provider: Provider::Claude,
+            label: label.to_owned(),
+            plan: None,
+            windows,
+            fetched_at: Utc::now(),
+        })
+    }
+
+    fn spent(name: &str, resets_in: Option<Duration>) -> Window {
+        Window::from_percent(name, 100.0).resetting_at(resets_in.map(|ahead| Utc::now() + ahead))
+    }
+
+    fn signed_out(label: &str) -> Report {
+        Report::SignedOut {
+            account: AccountId::new(Provider::Codex, label),
+            provider: Provider::Codex,
+            label: label.to_owned(),
+        }
+    }
+
+    fn failed(label: &str) -> Report {
+        Report::Failed {
+            account: AccountId::new(Provider::Grok, label),
+            provider: Provider::Grok,
+            label: label.to_owned(),
+            message: "timeout".to_owned(),
+        }
+    }
+
+    fn ranked(mut reports: Vec<Report>) -> Vec<String> {
+        rank(&mut reports);
+        reports
+            .iter()
+            .map(|report| report.label().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_least_used_account_ranks_first() {
+        let order = ranked(vec![
+            usage("half", vec![Window::from_percent("7d", 50.0)]),
+            usage(
+                "busy",
+                vec![
+                    Window::from_percent("5h", 5.0),
+                    Window::from_percent("7d", 90.0),
+                ],
+            ),
+            usage("fresh", vec![Window::from_percent("7d", 1.0)]),
+        ]);
+
+        assert_eq!(order, ["fresh", "half", "busy"]);
+    }
+
+    #[test]
+    fn an_account_reporting_no_limits_counts_as_untouched() {
+        let order = ranked(vec![
+            usage("known", vec![Window::from_percent("7d", 1.0)]),
+            usage("unknown", vec![]),
+        ]);
+
+        assert_eq!(order, ["unknown", "known"]);
+    }
+
+    #[test]
+    fn accounts_with_the_same_headroom_keep_the_stored_order() {
+        let order = ranked(vec![
+            usage("first", vec![Window::from_percent("7d", 40.0)]),
+            usage("second", vec![Window::from_percent("7d", 40.0)]),
+        ]);
+
+        assert_eq!(order, ["first", "second"]);
+    }
+
+    #[test]
+    fn exhausted_accounts_sink_below_usable_ones() {
+        let order = ranked(vec![
+            usage("spent", vec![spent("7d", Some(Duration::hours(1)))]),
+            usage("scarce", vec![Window::from_percent("7d", 99.9)]),
+        ]);
+
+        assert_eq!(order, ["scarce", "spent"]);
+    }
+
+    #[test]
+    fn the_exhausted_account_that_comes_back_soonest_ranks_higher() {
+        let order = ranked(vec![
+            usage("later", vec![spent("7d", Some(Duration::days(2)))]),
+            usage("unknown", vec![spent("7d", None)]),
+            usage("sooner", vec![spent("5h", Some(Duration::hours(3)))]),
+        ]);
+
+        assert_eq!(order, ["sooner", "later", "unknown"]);
+    }
+
+    #[test]
+    fn an_account_is_back_only_once_every_spent_window_resets() {
+        let order = ranked(vec![
+            usage(
+                "two windows",
+                vec![
+                    spent("5h", Some(Duration::hours(1))),
+                    spent("7d", Some(Duration::days(3))),
+                ],
+            ),
+            usage("one window", vec![spent("7d", Some(Duration::days(1)))]),
+        ]);
+
+        assert_eq!(order, ["one window", "two windows"]);
+    }
+
+    #[test]
+    fn accounts_that_cannot_answer_rank_last() {
+        let order = ranked(vec![
+            signed_out("gone"),
+            failed("broken"),
+            usage("spent", vec![spent("7d", Some(Duration::hours(1)))]),
+            usage("fine", vec![Window::from_percent("7d", 10.0)]),
+        ]);
+
+        assert_eq!(order, ["fine", "spent", "broken", "gone"]);
+    }
 
     #[test]
     fn counts_become_percentages() {
