@@ -1,6 +1,6 @@
 [package]
 name = "aiusg"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "One place to see usage limits and reset times across all your AI provider accounts"
 license = "MIT"
