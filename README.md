@@ -51,8 +51,9 @@ aiusg login claude        # or sign in directly — repeat for each account
 aiusg                     # show every account
 aiusg --provider claude   # just one provider
 aiusg --all               # include accounts that are signed out
+aiusg --sort usable       # most usable right now first (`--sort` on its own does too)
 aiusg --json              # machine readable, for status lines and scripts
-aiusg --watch             # live dashboard every 30s, r to refresh, q to quit
+aiusg --watch             # live dashboard every 30s, r refresh, s reorder, q quit
 aiusg --watch 10          # ...or every 10s (--follow and --interval also work)
 aiusg list                # stored accounts
 aiusg remove claude:jake@example.com
@@ -61,6 +62,12 @@ aiusg mcp                 # MCP server over stdio, for agents
 
 Multiple accounts on one provider are the point: run `aiusg login claude` once per
 account and each is stored separately, keyed by `provider:label`.
+
+`aiusg --sort usable` ranks the table by what is worth reaching for right now:
+most headroom first, then the accounts that are spent — soonest back first — then
+the ones that failed or are signed out. Headroom is the same measure the MCP
+`route` tool uses. Watch mode re-ranks on every refresh, and `s` switches between
+that order and the stored one without waiting for the next fetch.
 
 ## MCP server
 

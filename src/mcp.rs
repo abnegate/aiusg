@@ -202,24 +202,14 @@ fn routing(reports: &[Report]) -> Routing {
 }
 
 fn candidate(usage: &Usage) -> Candidate {
-    let limiting = usage
-        .windows
-        .iter()
-        .filter(|window| window.used_percent.is_some())
-        .max_by(|left, right| {
-            left.used_percent
-                .unwrap_or(0.0)
-                .total_cmp(&right.used_percent.unwrap_or(0.0))
-        });
+    let limiting = usage.limiting_window();
 
     Candidate {
         account: usage.account.as_str().to_owned(),
         provider: usage.provider,
         label: usage.label.clone(),
         plan: usage.plan.clone(),
-        headroom_percent: limiting
-            .and_then(|window| window.used_percent)
-            .map_or(100.0, |used| 100.0 - used),
+        headroom_percent: usage.headroom(),
         limiting_window: limiting.map(|window| window.name.clone()),
         resets_at: limiting.and_then(|window| window.resets_at),
     }

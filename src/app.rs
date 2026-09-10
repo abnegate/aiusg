@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 
-use crate::cli::StatusArgs;
-use crate::model::{Account, AccountId, Provider, Report, Usage};
+use crate::cli::{Sort, StatusArgs};
+use crate::model::{self, Account, AccountId, Provider, Report, Usage};
 use crate::provider;
 use crate::render;
 use crate::store::{Credential, Store};
@@ -31,6 +31,19 @@ pub async fn collect(store: &Store, provider: Option<Provider>) -> Result<Vec<Re
     .await;
 
     Ok(reports)
+}
+
+pub async fn snapshot(store: &Store, args: &StatusArgs) -> Result<Vec<Report>> {
+    let mut reports = collect(store, args.provider).await?;
+    order(&mut reports, args.sort);
+    Ok(reports)
+}
+
+pub fn order(reports: &mut [Report], sort: Sort) {
+    match sort {
+        Sort::Provider => {}
+        Sort::Usable => model::rank(reports),
+    }
 }
 
 async fn report_for(store: &Store, http: &reqwest::Client, account: &Account) -> Report {
@@ -109,7 +122,7 @@ pub async fn status(args: StatusArgs) -> Result<()> {
         return render::watch::run(interval, &store, &args).await;
     }
 
-    let reports = collect(&store, args.provider).await?;
+    let reports = snapshot(&store, &args).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&reports)?);
     } else {
@@ -196,5 +209,40 @@ pub async fn remove(account: &str) -> Result<()> {
         Ok(())
     } else {
         bail!("no stored account matches '{account}'")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{AccountId, Window};
+
+    fn report(label: &str, used_percent: f64) -> Report {
+        Report::Ok(Usage {
+            account: AccountId::new(Provider::Claude, label),
+            provider: Provider::Claude,
+            label: label.to_owned(),
+            plan: None,
+            windows: vec![Window::from_percent("7d", used_percent)],
+            fetched_at: Utc::now(),
+        })
+    }
+
+    fn labels(reports: &[Report]) -> Vec<&str> {
+        reports.iter().map(Report::label).collect()
+    }
+
+    #[test]
+    fn the_provider_order_is_left_as_stored() {
+        let mut reports = vec![report("busy", 90.0), report("idle", 10.0)];
+        order(&mut reports, Sort::Provider);
+        assert_eq!(labels(&reports), ["busy", "idle"]);
+    }
+
+    #[test]
+    fn the_usable_order_leads_with_the_most_left() {
+        let mut reports = vec![report("busy", 90.0), report("idle", 10.0)];
+        order(&mut reports, Sort::Usable);
+        assert_eq!(labels(&reports), ["idle", "busy"]);
     }
 }
