@@ -2,7 +2,7 @@ use std::io::{IsTerminal, Write, stdout};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::style::Stylize;
 use crossterm::{cursor, event, execute, terminal};
 
@@ -100,6 +100,10 @@ enum Action {
 }
 
 fn action_for(key: KeyEvent) -> Option<Action> {
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+
     match (key.code, key.modifiers) {
         (KeyCode::Char('q') | KeyCode::Esc, _) => Some(Action::Quit),
         (KeyCode::Char('c' | 'd'), KeyModifiers::CONTROL) => Some(Action::Quit),
@@ -123,6 +127,19 @@ mod tests {
         assert!(matches!(action_for(press('r')), Some(Action::Refresh)));
         assert!(matches!(action_for(press('q')), Some(Action::Quit)));
         assert!(action_for(press('x')).is_none());
+    }
+
+    #[test]
+    fn a_key_being_released_is_not_a_second_press() {
+        let released = KeyEvent::new_with_kind(
+            KeyCode::Char('s'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        );
+        assert!(
+            action_for(released).is_none(),
+            "Windows reports key up as its own event, which would undo the reorder"
+        );
     }
 
     #[test]
