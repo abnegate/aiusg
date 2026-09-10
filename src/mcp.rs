@@ -156,7 +156,7 @@ fn routing(reports: &[Report]) -> Routing {
                         provider: candidate.provider,
                         label: candidate.label,
                         reason: "exhausted".to_owned(),
-                        resets_at: candidate.resets_at,
+                        resets_at: usage.usable_at(),
                     });
                 }
             }
@@ -271,6 +271,29 @@ mod tests {
         let routing = routing(&reports);
         assert!(routing.chosen.is_none());
         assert_eq!(routing.unavailable[0].reason, "exhausted");
+    }
+
+    #[test]
+    fn an_exhausted_account_reports_when_every_spent_window_is_back() {
+        let now = Utc::now();
+        let reports = vec![usage(
+            "spent@example.com",
+            vec![
+                Window::from_percent("Session", 150.0)
+                    .resetting_at(Some(now + chrono::Duration::hours(1))),
+                Window::from_percent("Weekly", 100.0)
+                    .resetting_at(Some(now + chrono::Duration::days(3))),
+            ],
+        )];
+
+        let routing = routing(&reports);
+        let waiting = &routing.unavailable[0];
+        assert_eq!(waiting.reason, "exhausted");
+        assert_eq!(
+            waiting.resets_at,
+            Some(now + chrono::Duration::days(3)),
+            "the caller waits on this, and the account is not back until every spent window is"
+        );
     }
 
     #[test]

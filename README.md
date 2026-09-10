@@ -84,7 +84,9 @@ usage and pick which one to send work to.
 `codex`, `gemini`, `copilot`, `grok`, `grokbot`, `cursor`. Headroom is `100 -` the used
 percent of the account's most-consumed window, so the window closest to its cap
 decides the ranking. When nothing has headroom left, `route` returns a tool error
-carrying the reset times, so the caller can wait rather than retry blindly.
+carrying the reset times, so the caller can wait rather than retry blindly. The
+reset time on an exhausted account is when its *last* spent window comes back,
+not its most-consumed one, so waiting that long is enough.
 
 Register it with Claude Code:
 
