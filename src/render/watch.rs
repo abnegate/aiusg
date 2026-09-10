@@ -7,36 +7,36 @@ use crossterm::style::Stylize;
 use crossterm::{cursor, event, execute, terminal};
 
 use crate::app;
+use crate::cli::StatusArgs;
 use crate::render::table;
 use crate::store::Store;
 
 const POLL: Duration = Duration::from_millis(250);
 const MINIMUM_INTERVAL: u64 = 5;
 
-pub async fn run(interval: u64) -> Result<()> {
+pub async fn run(interval: u64, store: &Store, args: &StatusArgs) -> Result<()> {
     if !stdout().is_terminal() {
-        bail!("`aiusg watch` needs a terminal; use `aiusg` or `aiusg --json` when piping");
+        bail!("`aiusg --watch` needs a terminal; use `aiusg` or `aiusg --json` when piping");
     }
 
-    let store = Store::open()?;
     let interval = Duration::from_secs(interval.max(MINIMUM_INTERVAL));
 
     terminal::enable_raw_mode()?;
     execute!(stdout(), terminal::EnterAlternateScreen, cursor::Hide)?;
 
-    let outcome = tick(&store, interval).await;
+    let outcome = tick(store, interval, args).await;
 
     execute!(stdout(), cursor::Show, terminal::LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
     outcome
 }
 
-async fn tick(store: &Store, interval: Duration) -> Result<()> {
+async fn tick(store: &Store, interval: Duration, args: &StatusArgs) -> Result<()> {
     let mut due = Instant::now();
 
     loop {
         if Instant::now() >= due {
-            let reports = app::collect(store, None).await?;
+            let reports = app::collect(store, args.provider).await?;
             let footer = format!(
                 "  refreshing every {}s — r to refresh now, q to quit",
                 interval.as_secs()
@@ -50,7 +50,7 @@ async fn tick(store: &Store, interval: Duration) -> Result<()> {
             write!(
                 stdout(),
                 "{}{}",
-                table::render(&reports, false).replace('\n', "\r\n"),
+                table::render(&reports, args.all).replace('\n', "\r\n"),
                 footer.dark_grey()
             )?;
             stdout().flush()?;
