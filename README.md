@@ -15,6 +15,9 @@ Authenticate any number of accounts — including several on the same provider �
 
   Grok      jake@example.com  SuperGrok Heavy
     GrokBuild              ████████████████████ 100%              resets in 1d 21h
+
+  Grok Bot  jake@example.com  Grok Bot Plan
+    Included usage         █████████░░░░░░░░░░░  43%              resets in 3d 20h
 ```
 
 ## Install
@@ -71,7 +74,7 @@ usage and pick which one to send work to.
 | `accounts` | Stored accounts, without fetching usage |
 
 `route` and `usage` take an optional `provider` to scope to one of `claude`,
-`codex`, `gemini`, `copilot`, `grok`, `cursor`. Headroom is `100 -` the used
+`codex`, `gemini`, `copilot`, `grok`, `grokbot`, `cursor`. Headroom is `100 -` the used
 percent of the account's most-consumed window, so the window closest to its cap
 decides the ranking. When nothing has headroom left, `route` returns a tool error
 carrying the reset times, so the caller can wait rather than retry blindly.
@@ -101,6 +104,7 @@ Or in any client that reads `mcpServers`:
 | Copilot | `GET api.github.com/copilot_internal/user` | Premium request quota, used/entitlement, monthly reset |
 | Gemini | `POST cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` | Per-model remaining requests and reset time (needs an OAuth client, below) |
 | Grok | `GET cli-chat-proxy.grok.com/v1/billing?format=credits` | Credit usage per product, billing period reset |
+| Grok Bot | `POST api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus` | Included usage percent for the current period, plan label and reset time |
 | Cursor | `GET cursor.com/api/usage-summary` | Included and on-demand usage, billing cycle reset |
 
 Reading usage never spends quota — every endpoint above is a plain read.
@@ -120,6 +124,21 @@ export AIUSG_GEMINI_CLIENT_SECRET=...
 Create a **Desktop app** OAuth client in a Google Cloud project with the Gemini
 for Cloud API enabled, or reuse the public installed-app client that the
 `gemini-cli` project publishes in its own source.
+
+### Grok Bot rides on the Cursor session
+
+The Grok Bot desktop app is an Anysphere product, so it signs in with the same
+account the Cursor app uses and reports through Cursor's dashboard API. Like
+Cursor, it is import-only: `aiusg login grokbot` reads a session that already
+exists rather than driving a sign-in of its own.
+
+The app keeps its tokens in `sand-secrets.json`, encrypted with the OS keychain
+on macOS and Windows, so `aiusg` reads them only where they are stored in the
+clear and otherwise falls back to the session the Cursor app holds. Point
+`AIUSG_GROKBOT_SECRETS` at the file to override where it is read from.
+
+Usage pooled into an enterprise allowance is not this account's to report, so
+those accounts show no window rather than a misleading one.
 
 ### Signed-out accounts are hidden
 
@@ -179,6 +198,7 @@ provider. Use `aiusg login` for the rest.
 | `AIUSG_DEBUG` | Dump raw provider responses to stderr |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GEMINI_CLI_HOME`, `GROK_HOME` | Honoured when importing |
 | `AIUSG_CURSOR_DB` | Path to Cursor's `state.vscdb`, if it is not in the default location |
+| `AIUSG_GROKBOT_SECRETS` | Path to the Grok Bot app's `sand-secrets.json`, if it is not in the default location |
 
 ## Releasing
 
