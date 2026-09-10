@@ -31,7 +31,7 @@ struct Server;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ProviderFilter {
-    /// Only include accounts for this provider: claude, codex, gemini, copilot, grok, cursor
+    /// Only include accounts for this provider: claude, codex, gemini, copilot, grok, grokbot, cursor
     provider: Option<String>,
 }
 

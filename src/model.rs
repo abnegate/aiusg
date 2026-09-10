@@ -12,16 +12,18 @@ pub enum Provider {
     Gemini,
     Copilot,
     Grok,
+    GrokBot,
     Cursor,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 6] = [
+    pub const ALL: [Provider; 7] = [
         Provider::Claude,
         Provider::Codex,
         Provider::Gemini,
         Provider::Copilot,
         Provider::Grok,
+        Provider::GrokBot,
         Provider::Cursor,
     ];
 
@@ -32,6 +34,7 @@ impl Provider {
             Provider::Gemini => "gemini",
             Provider::Copilot => "copilot",
             Provider::Grok => "grok",
+            Provider::GrokBot => "grokbot",
             Provider::Cursor => "cursor",
         }
     }
@@ -43,6 +46,7 @@ impl Provider {
             Provider::Gemini => "Gemini",
             Provider::Copilot => "Copilot",
             Provider::Grok => "Grok",
+            Provider::GrokBot => "Grok Bot",
             Provider::Cursor => "Cursor",
         }
     }
@@ -66,7 +70,9 @@ impl FromStr for Provider {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("unknown provider '{0}' (expected one of: claude, codex, gemini, copilot, grok, cursor)")]
+#[error(
+    "unknown provider '{0}' (expected one of: claude, codex, gemini, copilot, grok, grokbot, cursor)"
+)]
 pub struct ProviderParseError(pub String);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
