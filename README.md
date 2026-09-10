@@ -49,7 +49,8 @@ aiusg                     # show every account
 aiusg --provider claude   # just one provider
 aiusg --all               # include accounts that are signed out
 aiusg --json              # machine readable, for status lines and scripts
-aiusg watch               # live dashboard, r to refresh, q to quit
+aiusg --watch             # live dashboard every 30s, r to refresh, q to quit
+aiusg --watch 10          # ...or every 10s (--follow and --interval also work)
 aiusg list                # stored accounts
 aiusg remove claude:jake@example.com
 aiusg mcp                 # MCP server over stdio, for agents

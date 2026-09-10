@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand};
 
 use crate::model::Provider;
 
+pub const DEFAULT_INTERVAL: u64 = 30;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "aiusg",
@@ -30,6 +32,21 @@ pub struct StatusArgs {
     /// Include accounts that are signed out
     #[arg(short, long)]
     pub all: bool,
+
+    /// Keep the dashboard on screen, refreshing every SECONDS
+    #[arg(
+        short,
+        long,
+        visible_alias = "follow",
+        alias = "live",
+        alias = "interval",
+        short_alias = 'i',
+        value_name = "SECONDS",
+        num_args = 0..=1,
+        default_missing_value = "30",
+        conflicts_with = "json"
+    )]
+    pub watch: Option<u64>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -58,10 +75,68 @@ pub enum Command {
     /// Run an MCP server over stdio so agents can read usage and route requests
     Mcp,
 
-    /// Live dashboard that refreshes on an interval
-    Watch {
-        /// Seconds between refreshes
-        #[arg(short, long, default_value_t = 60)]
-        interval: u64,
-    },
+    /// Live dashboard that refreshes on an interval, same as `aiusg --watch`
+    Watch(StatusArgs),
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).unwrap()
+    }
+
+    #[test]
+    fn watching_defaults_to_thirty_seconds() {
+        for args in [
+            ["aiusg", "--watch"].as_slice(),
+            ["aiusg", "--follow"].as_slice(),
+            ["aiusg", "--live"].as_slice(),
+            ["aiusg", "-w"].as_slice(),
+        ] {
+            assert_eq!(parse(args).status.watch, Some(DEFAULT_INTERVAL));
+        }
+    }
+
+    #[test]
+    fn watching_takes_an_interval() {
+        assert_eq!(parse(&["aiusg", "--watch", "5"]).status.watch, Some(5));
+        assert_eq!(
+            parse(&["aiusg", "--watch=5", "--provider", "claude"])
+                .status
+                .watch,
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn watching_is_off_by_default() {
+        assert_eq!(parse(&["aiusg"]).status.watch, None);
+    }
+
+    #[test]
+    fn the_watch_subcommand_defaults_to_the_same_interval() {
+        let Some(Command::Watch(args)) = parse(&["aiusg", "watch"]).command else {
+            panic!("expected the watch subcommand");
+        };
+        assert_eq!(args.watch, None);
+        for args in [
+            ["aiusg", "watch", "--interval", "5"].as_slice(),
+            ["aiusg", "watch", "-i", "5"].as_slice(),
+            ["aiusg", "watch", "-w", "5"].as_slice(),
+        ] {
+            let Some(Command::Watch(args)) = parse(args).command else {
+                panic!("expected the watch subcommand");
+            };
+            assert_eq!(args.watch, Some(5));
+        }
+    }
+
+    #[test]
+    fn watching_cannot_emit_json() {
+        assert!(Cli::try_parse_from(["aiusg", "--watch", "--json"]).is_err());
+    }
 }

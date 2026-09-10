@@ -102,6 +102,13 @@ pub async fn status(args: StatusArgs) -> Result<()> {
         return Ok(());
     }
 
+    if let Some(interval) = args.watch {
+        if args.json {
+            bail!("a live dashboard cannot emit JSON; drop `--json` or drop `--watch`");
+        }
+        return render::watch::run(interval, &store, &args).await;
+    }
+
     let reports = collect(&store, args.provider).await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&reports)?);
