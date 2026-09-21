@@ -7,6 +7,7 @@ pub mod grok;
 pub mod grokbot;
 
 use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use crate::model::{Account, Provider, Window};
@@ -33,6 +34,14 @@ pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &
         bail!("{what} request failed: HTTP {status}");
     }
     serde_json::from_str(&body).with_context(|| format!("parsing the {what} response"))
+}
+
+pub fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Default)]

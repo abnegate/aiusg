@@ -27,7 +27,7 @@ struct UsageResponse {
     plan_type: Option<String>,
     #[serde(default)]
     rate_limit: Option<RateLimit>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::provider::nullable")]
     additional_rate_limits: Vec<AdditionalLimit>,
 }
 
@@ -412,6 +412,17 @@ mod tests {
         let windows = windows(usage);
         assert_eq!(windows[1].name, "GPT-5.3-Codex-Spark 5h");
         assert_eq!(windows[2].name, "GPT-5.3-Codex-Spark 7d");
+    }
+
+    #[test]
+    fn null_additional_rate_limits_parses() {
+        let usage: UsageResponse = serde_json::from_str(
+            r#"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":10,"limit_window_seconds":604800,"reset_at":1789435639}},"additional_rate_limits":null}"#,
+        )
+        .expect("an explicit null additional_rate_limits should parse");
+        let windows = windows(usage);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].name, "7d");
     }
 
     #[test]

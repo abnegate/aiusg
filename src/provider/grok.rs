@@ -48,7 +48,7 @@ struct Billing {
     on_demand_used: Option<Amount>,
     #[serde(default)]
     on_demand_cap: Option<Amount>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::provider::nullable")]
     product_usage: Vec<ProductUsage>,
     #[serde(default)]
     billing_period_end: Option<DateTime<Utc>>,

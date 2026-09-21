@@ -41,7 +41,7 @@ struct Tier {
 
 #[derive(Debug, Default, Deserialize)]
 struct QuotaResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::provider::nullable")]
     buckets: Vec<Bucket>,
 }
 

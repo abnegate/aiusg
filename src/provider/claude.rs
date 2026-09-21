@@ -23,7 +23,7 @@ const USER_AGENT: &str = "claude-code/2.1.251";
 
 #[derive(Debug, Default, Deserialize)]
 struct UsageResponse {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::provider::nullable")]
     limits: Vec<Limit>,
     #[serde(default)]
     five_hour: Option<LegacyLimit>,
