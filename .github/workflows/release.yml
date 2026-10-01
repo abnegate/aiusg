@@ -145,7 +145,6 @@ jobs:
         with:
           name: release-version
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - name: Install Secret Service
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Publish
