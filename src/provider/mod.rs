@@ -6,16 +6,24 @@ pub mod gemini;
 pub mod grok;
 pub mod grokbot;
 
+use std::io::ErrorKind;
+use std::path::Path;
+
 use anyhow::{Context, Result, bail};
+use chrono::Utc;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::model::{Account, Provider, Window};
+use crate::model::{Account, Provider, Usage, Window};
 use crate::store::Credential;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct SignedOut(pub String);
+
+pub fn is_signed_out(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<SignedOut>())
+}
 
 pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &str) -> Result<T> {
     let status = response.status();
@@ -36,6 +44,21 @@ pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &
     serde_json::from_str(&body).with_context(|| format!("parsing the {what} response"))
 }
 
+fn endpoint(base: &str, path: &str) -> String {
+    format!("{}{path}", base.trim_end_matches('/'))
+}
+
+fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+    };
+    serde_json::from_str(&raw)
+        .map(Some)
+        .with_context(|| format!("parsing {}", path.display()))
+}
+
 pub fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -48,6 +71,19 @@ where
 pub struct Fetched {
     pub plan: Option<String>,
     pub windows: Vec<Window>,
+}
+
+impl Fetched {
+    pub fn into_usage(self, account: &Account) -> Usage {
+        Usage {
+            account: account.id.clone(),
+            provider: account.provider,
+            label: account.label.clone(),
+            plan: self.plan.or_else(|| account.plan.clone()),
+            windows: self.windows,
+            fetched_at: Utc::now(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -109,5 +145,85 @@ pub fn discover(provider: Provider) -> Result<Vec<Discovered>> {
         Provider::Grok => grok::discover(),
         Provider::GrokBot => grokbot::discover(),
         Provider::Cursor => cursor::discover(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+
+    use super::*;
+
+    #[test]
+    fn a_signed_out_error_is_recognised_through_added_context() {
+        let error = anyhow::Error::from(SignedOut("Claude usage rejected the token".to_owned()))
+            .context("fetching usage")
+            .context("refreshing login 3f2b9c1e");
+
+        assert!(
+            is_signed_out(&error),
+            "context layers must not hide a refused token"
+        );
+        assert!(
+            !is_signed_out(&anyhow!("Claude usage request failed: HTTP 500")),
+            "an ordinary failure is not a sign-out"
+        );
+    }
+
+    #[test]
+    fn a_fetch_becomes_usage_for_its_account_and_keeps_the_stored_plan_when_none_came() {
+        let account = Account::new(Provider::Codex, "jake@example.com", Some("pro".to_owned()));
+        let fetched = Fetched {
+            plan: None,
+            windows: vec![Window::from_percent("7d", 40.0)],
+        };
+
+        let usage = fetched.into_usage(&account);
+
+        assert_eq!(usage.account, account.id);
+        assert_eq!(usage.provider, Provider::Codex);
+        assert_eq!(usage.label, "jake@example.com");
+        assert_eq!(usage.plan.as_deref(), Some("pro"), "the stored plan stays");
+        assert_eq!(usage.windows.len(), 1);
+        assert_eq!(usage.windows[0].used_percent, Some(40.0));
+
+        let renamed = Fetched {
+            plan: Some("plus".to_owned()),
+            windows: Vec::new(),
+        }
+        .into_usage(&account);
+        assert_eq!(
+            renamed.plan.as_deref(),
+            Some("plus"),
+            "a plan the fetch reports replaces the stored one"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_joins_a_base_with_or_without_a_trailing_slash() {
+        assert_eq!(
+            endpoint("http://127.0.0.1:8080", "/api/oauth/usage"),
+            "http://127.0.0.1:8080/api/oauth/usage"
+        );
+        assert_eq!(
+            endpoint("http://127.0.0.1:8080/", "/api/oauth/usage"),
+            "http://127.0.0.1:8080/api/oauth/usage"
+        );
+    }
+
+    #[test]
+    fn a_missing_file_loads_as_nothing_and_a_broken_one_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("auth.json");
+
+        let missing: Option<serde_json::Value> = load(&path).unwrap();
+        assert!(missing.is_none());
+
+        std::fs::write(&path, "{not json").unwrap();
+        let broken = load::<serde_json::Value>(&path).unwrap_err();
+        assert!(
+            format!("{broken:#}").contains("parsing"),
+            "the error names what failed: {broken:#}"
+        );
     }
 }

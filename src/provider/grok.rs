@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
@@ -8,9 +8,12 @@ use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
 use crate::oauth::{Loopback, Pkce, decode_jwt_claims, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, load};
 use crate::store::Credential;
 
+const AUTH_FILE: &str = "auth.json";
+const HOME_DIRECTORY: &str = ".grok";
+const HOME_ENV: &str = "GROK_HOME";
 const DEFAULT_BASE: &str = "https://cli-chat-proxy.grok.com/v1";
 const AUTHORIZE_URL: &str = "https://auth.x.ai/oauth2/authorize";
 const TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
@@ -313,22 +316,22 @@ struct StoredAccount {
     expires_at: Option<DateTime<Utc>>,
 }
 
-fn auth_path() -> Option<PathBuf> {
-    let base = match std::env::var_os("GROK_HOME") {
-        Some(directory) => PathBuf::from(directory),
-        None => dirs::home_dir()?.join(".grok"),
-    };
-    Some(base.join("auth.json"))
+fn home() -> Option<PathBuf> {
+    match std::env::var_os(HOME_ENV) {
+        Some(directory) => Some(PathBuf::from(directory)),
+        None => Some(dirs::home_dir()?.join(HOME_DIRECTORY)),
+    }
 }
 
 pub fn discover() -> Result<Vec<Discovered>> {
-    let Some(path) = auth_path().filter(|path| path.exists()) else {
-        return Ok(Vec::new());
-    };
-    let raw =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let stored: BTreeMap<String, StoredAccount> =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    match home() {
+        Some(home) => discover_in(&home),
+        None => Ok(Vec::new()),
+    }
+}
+
+pub fn discover_in(home: &Path) -> Result<Vec<Discovered>> {
+    let stored: BTreeMap<String, StoredAccount> = load(&home.join(AUTH_FILE))?.unwrap_or_default();
 
     let mut found = Vec::new();
     for (issuer, account) in stored {
@@ -405,6 +408,61 @@ mod tests {
         let windows = windows(envelope.config);
         assert_eq!(windows.len(), 1);
         assert_eq!(windows[0].used_percent, Some(42.0));
+    }
+
+    fn home_with(auth: &str) -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(AUTH_FILE), auth).unwrap();
+        home
+    }
+
+    #[test]
+    fn discover_in_reads_every_account_in_the_home_it_is_given() {
+        let home = home_with(
+            r#"{"https://auth.x.ai::user-1":{"key":"grok-key-1","email":"jake@example.com","user_id":"user-1","team_id":"team-1","refresh_token":"grok-refresh","expires_at":"2026-10-02T00:00:00Z"},"https://auth.x.ai::user-2":{"key":"grok-key-2"}}"#,
+        );
+
+        let found = discover_in(home.path()).unwrap();
+
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].account.label, "jake@example.com");
+        assert_eq!(found[0].credential.access_token, "grok-key-1");
+        assert_eq!(found[0].credential.get(TEAM_ID), Some("team-1"));
+        assert_eq!(found[0].credential.get(USER_ID), Some("user-1"));
+        assert!(found[0].credential.expires_at.is_some());
+        assert_eq!(
+            found[1].account.label, "user-2",
+            "an account without an email is labelled by its issuer suffix"
+        );
+    }
+
+    #[test]
+    fn discover_in_a_home_without_auth_finds_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(discover_in(home.path()).unwrap().is_empty());
+        assert!(
+            discover_in(&home.path().join("never-created"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn discover_in_skips_an_empty_token() {
+        let home = home_with(
+            r#"{"https://auth.x.ai::user-1":{"key":""},"https://auth.x.ai::user-2":{"email":"x@example.com"}}"#,
+        );
+        assert!(discover_in(home.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn discover_in_fails_on_unparsable_auth() {
+        let home = home_with("[1, 2");
+        let error = discover_in(home.path()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(AUTH_FILE),
+            "the error names the file: {error:#}"
+        );
     }
 
     #[test]

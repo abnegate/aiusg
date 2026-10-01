@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::{TimeZone, Utc};
@@ -6,10 +6,14 @@ use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
 use crate::oauth::{Loopback, Pkce, decode_jwt_claims, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, endpoint, load, read_json};
 use crate::store::Credential;
 
-const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+pub const BASE: &str = "https://chatgpt.com";
+const USAGE_PATH: &str = "/backend-api/wham/usage";
+const AUTH_FILE: &str = "auth.json";
+const HOME_DIRECTORY: &str = ".codex";
+const HOME_ENV: &str = "CODEX_HOME";
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -94,8 +98,16 @@ fn describe_window(seconds: i64) -> String {
 }
 
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
+    fetch_at(http, BASE, credential).await
+}
+
+pub async fn fetch_at(
+    http: &reqwest::Client,
+    base: &str,
+    credential: &Credential,
+) -> Result<Fetched> {
     let mut request = http
-        .get(USAGE_URL)
+        .get(endpoint(base, USAGE_PATH))
         .header(
             "Authorization",
             format!("Bearer {}", credential.access_token),
@@ -109,7 +121,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
     }
 
     let response = request.send().await.context("requesting Codex usage")?;
-    let usage: UsageResponse = crate::provider::read_json(response, "Codex usage").await?;
+    let usage: UsageResponse = read_json(response, "Codex usage").await?;
 
     Ok(Fetched {
         plan: usage.plan_type.clone(),
@@ -326,25 +338,24 @@ struct StoredTokens {
     account_id: Option<String>,
 }
 
-fn auth_path() -> Option<PathBuf> {
-    let base = match std::env::var_os("CODEX_HOME") {
-        Some(directory) => PathBuf::from(directory),
-        None => dirs::home_dir()?.join(".codex"),
-    };
-    Some(base.join("auth.json"))
+fn home() -> Option<PathBuf> {
+    match std::env::var_os(HOME_ENV) {
+        Some(directory) => Some(PathBuf::from(directory)),
+        None => Some(dirs::home_dir()?.join(HOME_DIRECTORY)),
+    }
 }
 
 pub fn discover() -> Result<Vec<Discovered>> {
-    let Some(path) = auth_path().filter(|path| path.exists()) else {
-        return Ok(Vec::new());
-    };
-    let raw =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let stored: StoredAuth =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    match home() {
+        Some(home) => discover_in(&home),
+        None => Ok(Vec::new()),
+    }
+}
 
+pub fn discover_in(home: &Path) -> Result<Vec<Discovered>> {
+    let stored: Option<StoredAuth> = load(&home.join(AUTH_FILE))?;
     let Some(tokens) = stored
-        .tokens
+        .and_then(|stored| stored.tokens)
         .filter(|tokens| !tokens.access_token.is_empty())
     else {
         return Ok(Vec::new());
@@ -430,6 +441,69 @@ mod tests {
         assert_eq!(describe_window(17940), "5h", "299 minutes rounds to 5h");
         assert_eq!(describe_window(604800), "7d");
         assert_eq!(describe_window(3600), "60m");
+    }
+
+    fn home_with(auth: &str) -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(AUTH_FILE), auth).unwrap();
+        home
+    }
+
+    #[test]
+    fn discover_in_reads_the_auth_file_of_the_home_it_is_given() {
+        let home = home_with(
+            r#"{"OPENAI_API_KEY":null,"tokens":{"access_token":"codex-access","refresh_token":"codex-refresh","id_token":"not-a-jwt","account_id":"acct-42"},"last_refresh":"2026-09-30T10:00:00Z"}"#,
+        );
+
+        let found = discover_in(home.path()).unwrap();
+
+        assert_eq!(found.len(), 1);
+        let discovered = &found[0];
+        assert_eq!(discovered.account.provider, Provider::Codex);
+        assert_eq!(
+            discovered.account.label, "codex",
+            "an unreadable id_token falls back to the provider name"
+        );
+        assert_eq!(discovered.credential.access_token, "codex-access");
+        assert_eq!(
+            discovered.credential.refresh_token.as_deref(),
+            Some("codex-refresh")
+        );
+        assert_eq!(
+            discovered.credential.get(ACCOUNT_ID),
+            Some("acct-42"),
+            "the stored account id travels with the credential"
+        );
+    }
+
+    #[test]
+    fn discover_in_a_home_without_auth_finds_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(discover_in(home.path()).unwrap().is_empty());
+        assert!(
+            discover_in(&home.path().join("never-created"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn discover_in_skips_an_empty_token() {
+        let home = home_with(r#"{"tokens":{"access_token":""}}"#);
+        assert!(discover_in(home.path()).unwrap().is_empty());
+
+        let api_key_only = home_with(r#"{"OPENAI_API_KEY":"sk-123","tokens":null}"#);
+        assert!(discover_in(api_key_only.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn discover_in_fails_on_unparsable_auth() {
+        let home = home_with("{\"tokens\":");
+        let error = discover_in(home.path()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(AUTH_FILE),
+            "the error names the file: {error:#}"
+        );
     }
 
     #[test]
