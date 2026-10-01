@@ -140,6 +140,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
     })
 }
 
+#[cfg(feature = "login")]
 pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
     discover()?
         .into_iter()

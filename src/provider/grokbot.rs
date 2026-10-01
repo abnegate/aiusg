@@ -85,6 +85,7 @@ fn windows(status: &UsageStatus) -> Vec<Window> {
     ]
 }
 
+#[cfg(feature = "login")]
 pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
     discover()?
         .into_iter()
