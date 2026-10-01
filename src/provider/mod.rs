@@ -185,7 +185,7 @@ pub async fn refresh(
         Provider::Codex => codex::refresh(http, credential).await,
         Provider::Gemini => gemini::refresh(http, credential).await,
         #[cfg(feature = "copilot")]
-        Provider::Copilot => Ok(None),
+        Provider::Copilot => copilot::refresh(http, credential).await,
         Provider::Grok => grok::refresh(http, credential).await,
         #[cfg(feature = "grokbot")]
         Provider::GrokBot => grokbot::refresh(http, credential).await,

@@ -6,7 +6,7 @@ mod device;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use serde::Deserialize;
 
@@ -210,19 +210,34 @@ fn keychain_token(_account: &str) -> Option<String> {
     None
 }
 
-/// Fails, since GitHub OAuth tokens do not expire and cannot be refreshed.
+/// Always `None`: GitHub OAuth tokens do not expire, so there is nothing to
+/// renew.
 pub async fn refresh(
     _http: &reqwest::Client,
     _credential: &Credential,
 ) -> Result<Option<Credential>> {
-    Err(anyhow!(
-        "GitHub OAuth tokens do not expire and cannot be refreshed"
-    ))
+    Ok(None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_github_token_has_nothing_to_refresh() {
+        let credential = Credential::bearer("gho_token");
+        let refreshed = refresh(&reqwest::Client::new(), &credential).await.unwrap();
+        assert!(
+            refreshed.is_none(),
+            "a token that never expires needs no renewal"
+        );
+
+        let dispatched =
+            crate::provider::refresh(Provider::Copilot, &reqwest::Client::new(), &credential)
+                .await
+                .unwrap();
+        assert!(dispatched.is_none());
+    }
 
     const LIVE: &str = r#"{"login":"abnegate","copilot_plan":"individual","quota_reset_date":"2026-10-01","quota_reset_date_utc":"2026-10-01T00:00:00.000Z","quota_snapshots":{"premium_interactions":{"quota_id":"premium_interactions","entitlement":1500,"remaining":-7,"quota_remaining":-6.9,"percent_remaining":0.0,"unlimited":false,"has_quota":false,"overage_count":0,"overage_permitted":false,"overage_entitlement":0,"credits_used":1506,"token_based_billing":true,"quota_reset_at":0},"chat":{"entitlement":0,"remaining":0,"percent_remaining":0.0,"unlimited":true},"completions":{"entitlement":0,"remaining":0,"percent_remaining":0.0,"unlimited":true}}}"#;
 
