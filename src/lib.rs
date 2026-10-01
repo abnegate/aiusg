@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 #[cfg(feature = "cli")]
 #[doc(hidden)]

@@ -1,3 +1,5 @@
+//! Grok, through the xAI login that the Grok CLI stores.
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -93,6 +95,7 @@ struct Settings {
     subscription_tier_display: Option<String>,
 }
 
+/// Reads the credit usage and plan for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let base = base();
     let response = http
@@ -192,6 +195,7 @@ fn jwt_tier(credential: &Credential) -> Option<String> {
     Some(format!("tier {tier}"))
 }
 
+/// Signs in to xAI in the browser and returns the new login.
 #[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
@@ -277,6 +281,8 @@ impl TokenResponse {
     }
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -325,6 +331,8 @@ struct StoredAccount {
     expires_at: Option<DateTime<Utc>>,
 }
 
+/// Finds the logins the Grok CLI stored, as [`discover_in`] reads them from
+/// the Grok home.
 pub fn discover() -> Result<Vec<Discovered>> {
     match home(HOME_ENV, HOME_DIRECTORY) {
         Some(directory) => discover_in(&directory),

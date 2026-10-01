@@ -1,3 +1,5 @@
+//! Codex, through the ChatGPT login that the Codex CLI stores.
+
 use std::path::Path;
 
 #[cfg(feature = "login")]
@@ -105,6 +107,8 @@ fn describe_window(seconds: i64) -> String {
     }
 }
 
+/// Reads the usage windows and plan for `credential` from [`BASE`], as
+/// [`fetch_at`] does.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     fetch_at(http, BASE, credential).await
 }
@@ -180,6 +184,7 @@ fn collect(limit: RateLimit, primary: &str, secondary: &str) -> Vec<Window> {
     .collect()
 }
 
+/// Signs in to ChatGPT in the browser and returns the new login.
 #[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
@@ -303,6 +308,8 @@ impl TokenResponse {
     }
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -354,6 +361,8 @@ struct StoredTokens {
     account_id: Option<String>,
 }
 
+/// Finds the login the Codex CLI stored, as [`discover_in`] reads it from
+/// the Codex home.
 pub fn discover() -> Result<Vec<Discovered>> {
     match home(HOME_ENV, HOME_DIRECTORY) {
         Some(directory) => discover_in(&directory),

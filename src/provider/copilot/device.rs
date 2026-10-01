@@ -31,6 +31,7 @@ struct TokenResponse {
     error: Option<String>,
 }
 
+/// Signs in to GitHub with the device flow and returns the new login.
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let device: DeviceCode = http
         .post(DEVICE_CODE_URL)

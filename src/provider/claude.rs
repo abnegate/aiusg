@@ -1,3 +1,5 @@
+//! Claude, through the OAuth login that Claude Code stores.
+
 mod profile;
 mod profile_account;
 mod profile_organization;
@@ -162,6 +164,8 @@ fn windows(usage: UsageResponse) -> Vec<Window> {
     windows
 }
 
+/// Reads the usage windows and plan for `credential` from [`BASE`], as
+/// [`fetch_at`] does.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     fetch_at(http, BASE, credential).await
 }
@@ -227,6 +231,7 @@ fn request(http: &reqwest::Client, access_token: &str, url: &str) -> reqwest::Re
         .header("User-Agent", USER_AGENT)
 }
 
+/// Signs in to Claude in the browser and returns the new login.
 #[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
@@ -308,6 +313,8 @@ impl TokenResponse {
     }
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -360,6 +367,8 @@ struct StoredOauth {
     rate_limit_tier: Option<String>,
 }
 
+/// Finds the login Claude Code stored: in the keychain when it holds one,
+/// otherwise as [`discover_in`] reads it from the configuration directory.
 pub fn discover() -> Result<Vec<Discovered>> {
     if let Some(stored) = keychain_credentials() {
         return Ok(stored.map(discovered).unwrap_or_default());

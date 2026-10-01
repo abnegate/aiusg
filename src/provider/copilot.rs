@@ -1,3 +1,5 @@
+//! GitHub Copilot, through the token the GitHub Copilot app stores.
+
 #[cfg(feature = "login")]
 mod device;
 
@@ -46,6 +48,7 @@ struct Snapshot {
     credits_used: Option<f64>,
 }
 
+/// Reads the premium request and chat quotas for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let response = http
         .get(USAGE_URL)
@@ -115,6 +118,7 @@ fn parse_reset_date(value: Option<&str>) -> Option<DateTime<Utc>> {
         .single()
 }
 
+/// Finds the GitHub logins the Copilot apps stored on this machine.
 pub fn discover() -> Result<Vec<Discovered>> {
     let mut found = from_apps_file().unwrap_or_default();
     if found.is_empty()
@@ -206,6 +210,7 @@ fn keychain_token(_account: &str) -> Option<String> {
     None
 }
 
+/// Fails, since GitHub OAuth tokens do not expire and cannot be refreshed.
 pub async fn refresh(
     _http: &reqwest::Client,
     _credential: &Credential,

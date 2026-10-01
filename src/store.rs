@@ -1,3 +1,6 @@
+//! The accounts aiusg tracks and their credentials, kept on disk or in the
+//! keychain.
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,18 +20,24 @@ const ACCOUNTS_FILE: &str = "accounts.json";
 const CREDENTIALS_FILE: &str = "credentials.json";
 const KEYCHAIN_ENV: &str = "AIUSG_KEYCHAIN";
 
+/// What a provider needs to read an account's usage.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Credential {
+    /// The token sent with each request.
     pub access_token: String,
+    /// The token that renews `access_token`, when the provider issues one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
+    /// When `access_token` stops working, when the provider says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
+    /// Provider-specific values, such as an account or team id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, String>,
 }
 
 impl Credential {
+    /// A credential holding only `access_token`.
     pub fn bearer(access_token: impl Into<String>) -> Self {
         Self {
             access_token: access_token.into(),
@@ -36,15 +45,18 @@ impl Credential {
         }
     }
 
+    /// This credential with the extra value `key` set to `value`.
     pub fn with(mut self, key: &str, value: impl Into<String>) -> Self {
         self.extra.insert(key.to_owned(), value.into());
         self
     }
 
+    /// The extra value stored under `key`.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.extra.get(key).map(String::as_str)
     }
 
+    /// Whether `expires_at` has passed.
     pub fn is_expired(&self) -> bool {
         self.expires_at.is_some_and(|at| at <= Utc::now())
     }
@@ -86,6 +98,13 @@ struct Manifest {
     accounts: Vec<Account>,
 }
 
+/// The accounts aiusg tracks and their credentials.
+///
+/// It lives in `AIUSG_HOME`, by default `aiusg` under `XDG_CONFIG_HOME` or
+/// `~/.config` on Unix, and under the platform configuration directory
+/// elsewhere. Credentials go in the keychain
+/// when `AIUSG_KEYCHAIN` is `1` or `true`, otherwise in a file only the user
+/// can read.
 #[derive(Clone, Debug)]
 pub struct Store {
     directory: PathBuf,
@@ -94,6 +113,7 @@ pub struct Store {
 }
 
 impl Store {
+    /// Opens the store, creating its directory when it does not exist.
     pub fn open() -> Result<Self> {
         let directory = match std::env::var_os("AIUSG_HOME") {
             Some(path) => PathBuf::from(path),
@@ -137,10 +157,12 @@ impl Store {
         write_json(&self.manifest_path(), manifest)
     }
 
+    /// Every tracked account, ordered by provider then label.
     pub fn accounts(&self) -> Result<Vec<Account>> {
         Ok(self.read_manifest()?.accounts)
     }
 
+    /// The tracked accounts of `provider`, or every account when it is `None`.
     pub fn accounts_for(&self, provider: Option<Provider>) -> Result<Vec<Account>> {
         let accounts = self.accounts()?;
         Ok(match provider {
@@ -152,6 +174,7 @@ impl Store {
         })
     }
 
+    /// Tracks `account` with `credential`, replacing any account with its id.
     pub fn save(&self, account: &Account, credential: &Credential) -> Result<()> {
         let mut manifest = self.read_manifest()?;
         manifest
@@ -165,6 +188,8 @@ impl Store {
         self.write_credential(&account.id, credential)
     }
 
+    /// Stops tracking the account `id` and forgets its credential, returning
+    /// whether it was tracked.
     pub fn remove(&self, id: &AccountId) -> Result<bool> {
         let mut manifest = self.read_manifest()?;
         let before = manifest.accounts.len();
@@ -177,6 +202,7 @@ impl Store {
         Ok(removed)
     }
 
+    /// The stored credential of the account `id`.
     pub fn credential(&self, id: &AccountId) -> Result<Credential> {
         match self.backend {
             #[cfg(feature = "keychain")]
@@ -197,6 +223,7 @@ impl Store {
         }
     }
 
+    /// Stores `credential` for the account `id`, replacing any it had.
     pub fn write_credential(&self, id: &AccountId, credential: &Credential) -> Result<()> {
         match self.backend {
             #[cfg(feature = "keychain")]
@@ -230,6 +257,7 @@ impl Store {
         }
     }
 
+    /// [`credential`](Self::credential) off the async runtime's threads.
     pub async fn credential_async(&self, id: &AccountId) -> Result<Credential> {
         let store = self.clone();
         let id = id.clone();
@@ -238,6 +266,8 @@ impl Store {
             .context("reading a credential")?
     }
 
+    /// [`write_credential`](Self::write_credential) off the async runtime's
+    /// threads.
     pub async fn write_credential_async(
         &self,
         id: &AccountId,

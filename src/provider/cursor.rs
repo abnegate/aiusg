@@ -1,3 +1,5 @@
+//! Cursor, through the session the Cursor app stores.
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -123,6 +125,7 @@ fn subject_of(token: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Reads the monthly request usage for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let response = http
         .get(USAGE_URL)
@@ -140,6 +143,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
     })
 }
 
+/// Takes the session the Cursor app is signed in with.
 #[cfg(feature = "login")]
 pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
     discover()?
@@ -148,6 +152,8 @@ pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
         .context("sign in to the Cursor app first, then run `aiusg login cursor` again")
 }
 
+/// Takes the session the Cursor app holds now, since only the app can renew
+/// it.
 pub async fn refresh(
     _http: &reqwest::Client,
     _credential: &Credential,
@@ -186,6 +192,7 @@ fn decode(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Finds the session the Cursor app stored in its state database.
 pub fn discover() -> Result<Vec<Discovered>> {
     let Some(path) = database().filter(|path| path.exists()) else {
         return Ok(Vec::new());

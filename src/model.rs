@@ -1,3 +1,5 @@
+//! The accounts, usage windows and reports shared by every provider.
+
 mod availability;
 
 use std::cmp::Ordering;
@@ -13,19 +15,28 @@ const COPILOT_FEATURE: &str = "copilot";
 const CURSOR_FEATURE: &str = "cursor";
 const GROKBOT_FEATURE: &str = "grokbot";
 
+/// An AI service whose usage limits aiusg reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
+    /// Anthropic's Claude, through a Claude Code login.
     Claude,
+    /// OpenAI's Codex, through a ChatGPT login.
     Codex,
+    /// Google's Gemini Code Assist.
     Gemini,
+    /// GitHub Copilot.
     Copilot,
+    /// xAI's Grok CLI.
     Grok,
+    /// xAI's Grok Bot app.
     GrokBot,
+    /// The Cursor editor.
     Cursor,
 }
 
 impl Provider {
+    /// Every provider, built into this build or not.
     pub const ALL: [Provider; 7] = [
         Provider::Claude,
         Provider::Codex,
@@ -36,6 +47,7 @@ impl Provider {
         Provider::Cursor,
     ];
 
+    /// The lowercase identifier used in account ids, the CLI and JSON.
     pub fn slug(self) -> &'static str {
         match self {
             Provider::Claude => "claude",
@@ -48,6 +60,7 @@ impl Provider {
         }
     }
 
+    /// The human-readable name.
     pub fn display(self) -> &'static str {
         match self {
             Provider::Claude => "Claude",
@@ -100,24 +113,30 @@ impl FromStr for Provider {
     }
 }
 
+/// A string that names no [`Provider`] slug.
 #[derive(Debug, thiserror::Error)]
 #[error(
     "unknown provider '{0}' (expected one of: claude, codex, gemini, copilot, grok, grokbot, cursor)"
 )]
 pub struct ProviderParseError(pub String);
 
+/// An account's stable identity: `<provider slug>:<label>`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(String);
 
 impl AccountId {
+    /// The id of the `provider` account labelled `label`.
     pub fn new(provider: Provider, label: &str) -> Self {
         Self(format!("{}:{}", provider.slug(), label))
     }
 
+    /// The id as `<provider slug>:<label>`.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    /// Parses an id in its displayed form, or `None` when the provider is
+    /// unknown or the label is empty.
     pub fn from_display(value: &str) -> Option<Self> {
         let (provider, label) = value.split_once(':')?;
         let provider: Provider = provider.parse().ok()?;
@@ -131,16 +150,23 @@ impl fmt::Display for AccountId {
     }
 }
 
+/// A signed-in account with one provider.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Account {
+    /// The account's identity, derived from `provider` and `label`.
     pub id: AccountId,
+    /// The provider the account belongs to.
     pub provider: Provider,
+    /// The name the account is shown by, usually its email.
     pub label: String,
+    /// The subscription plan, when the provider reports one.
     pub plan: Option<String>,
+    /// When the account was added.
     pub added_at: DateTime<Utc>,
 }
 
 impl Account {
+    /// A `provider` account labelled `label`, added now.
     pub fn new(provider: Provider, label: impl Into<String>, plan: Option<String>) -> Self {
         let label = label.into();
         Self {
@@ -153,16 +179,23 @@ impl Account {
     }
 }
 
+/// One usage limit, such as a 5-hour session or a weekly cap.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Window {
+    /// The limit's name, such as `5h` or `7d`.
     pub name: String,
+    /// How much of the limit is used, from 0 up; above 100 is overage.
     pub used_percent: Option<f64>,
+    /// The units used, when the provider counts them.
     pub used: Option<u64>,
+    /// The units allowed, when the provider counts them.
     pub limit: Option<u64>,
+    /// When the limit resets.
     pub resets_at: Option<DateTime<Utc>>,
 }
 
 impl Window {
+    /// A window `used_percent` used, with no counts or reset.
     pub fn from_percent(name: impl Into<String>, used_percent: f64) -> Self {
         Self {
             name: name.into(),
@@ -173,6 +206,8 @@ impl Window {
         }
     }
 
+    /// A window of `used` out of `limit` units, with no percentage when
+    /// `limit` is zero.
     pub fn from_count(name: impl Into<String>, used: u64, limit: u64) -> Self {
         let used_percent = if limit == 0 {
             None
@@ -188,27 +223,37 @@ impl Window {
         }
     }
 
+    /// This window, resetting at `resets_at`.
     pub fn resetting_at(mut self, resets_at: Option<DateTime<Utc>>) -> Self {
         self.resets_at = resets_at;
         self
     }
 
+    /// Whether the window is at or over 100% used.
     pub fn is_exhausted(&self) -> bool {
         self.used_percent.is_some_and(|used| used >= 100.0)
     }
 }
 
+/// The usage of one account at one moment.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Usage {
+    /// The account the usage belongs to.
     pub account: AccountId,
+    /// The account's provider.
     pub provider: Provider,
+    /// The account's label.
     pub label: String,
+    /// The account's plan.
     pub plan: Option<String>,
+    /// Every limit the provider reported.
     pub windows: Vec<Window>,
+    /// When the usage was read.
     pub fetched_at: DateTime<Utc>,
 }
 
 impl Usage {
+    /// The most used window that reports a percentage.
     pub fn limiting_window(&self) -> Option<&Window> {
         self.windows
             .iter()
@@ -220,6 +265,8 @@ impl Usage {
             })
     }
 
+    /// The percentage left in the [limiting window](Self::limiting_window),
+    /// or 100 when no window reports one.
     pub fn headroom(&self) -> f64 {
         self.limiting_window()
             .and_then(|window| window.used_percent)
@@ -243,25 +290,37 @@ impl Usage {
     }
 }
 
+/// The outcome of reading one account's usage.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum Report {
+    /// The usage was read.
     Ok(Usage),
+    /// The provider refused the stored credential.
     #[serde(rename = "signed_out")]
     SignedOut {
+        /// The account that is signed out.
         account: AccountId,
+        /// The account's provider.
         provider: Provider,
+        /// The account's label.
         label: String,
     },
+    /// The usage could not be read for another reason.
     Failed {
+        /// The account that failed.
         account: AccountId,
+        /// The account's provider.
         provider: Provider,
+        /// The account's label.
         label: String,
+        /// What went wrong.
         message: String,
     },
 }
 
 impl Report {
+    /// The provider of the reported account.
     pub fn provider(&self) -> Provider {
         match self {
             Report::Ok(usage) => usage.provider,
@@ -269,6 +328,7 @@ impl Report {
         }
     }
 
+    /// The label of the reported account.
     pub fn label(&self) -> &str {
         match self {
             Report::Ok(usage) => &usage.label,
@@ -276,10 +336,12 @@ impl Report {
         }
     }
 
+    /// Whether the report is [`Report::SignedOut`].
     pub fn is_signed_out(&self) -> bool {
         matches!(self, Report::SignedOut { .. })
     }
 
+    /// How usable the reported account is right now.
     pub fn usability(&self) -> Usability {
         match self {
             Report::Ok(usage) => {
@@ -298,11 +360,22 @@ impl Report {
     }
 }
 
+/// How usable an account is, ordered from most to least usable.
 #[derive(Clone, Copy, Debug)]
 pub enum Usability {
-    Available { headroom: f64 },
-    Exhausted { availability: Availability },
+    /// The account has room left; more headroom orders first.
+    Available {
+        /// The percentage left in the limiting window.
+        headroom: f64,
+    },
+    /// A limit is spent; the soonest to come back orders first.
+    Exhausted {
+        /// When the account can take work again.
+        availability: Availability,
+    },
+    /// The usage could not be read.
     Failing,
+    /// The provider refused the stored credential.
     SignedOut,
 }
 
@@ -348,6 +421,7 @@ impl PartialEq for Usability {
 
 impl Eq for Usability {}
 
+/// Sorts `reports` from most to least usable, keeping the order of equals.
 pub fn rank(reports: &mut [Report]) {
     reports.sort_by_key(|report| report.usability());
 }

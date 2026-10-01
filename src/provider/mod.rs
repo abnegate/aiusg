@@ -1,3 +1,5 @@
+//! Reading usage from each provider, and finding and refreshing its logins.
+
 pub mod claude;
 pub mod codex;
 #[cfg(feature = "copilot")]
@@ -94,7 +96,9 @@ where
 /// What one fetch read from a provider, before it is tied to an account.
 #[derive(Clone, Debug, Default)]
 pub struct Fetched {
+    /// The plan the provider reported, if any.
     pub plan: Option<String>,
+    /// Every limit the provider reported.
     pub windows: Vec<Window>,
 }
 
@@ -120,12 +124,16 @@ impl Fetched {
     }
 }
 
+/// A login found on this machine or made by signing in.
 #[derive(Clone, Debug)]
 pub struct Discovered {
+    /// The account the login belongs to.
     pub account: Account,
+    /// The login's credential.
     pub credential: Credential,
 }
 
+/// Reads the usage of `credential` from `provider`.
 pub async fn fetch(
     provider: Provider,
     http: &reqwest::Client,
@@ -147,6 +155,7 @@ pub async fn fetch(
     }
 }
 
+/// Signs in to `provider` interactively and returns the new login.
 #[cfg(feature = "login")]
 pub async fn login(provider: Provider, http: &reqwest::Client) -> Result<Discovered> {
     match provider {
@@ -165,6 +174,7 @@ pub async fn login(provider: Provider, http: &reqwest::Client) -> Result<Discove
     }
 }
 
+/// Renews `credential` with `provider`, or `None` when it has nothing to renew.
 pub async fn refresh(
     provider: Provider,
     http: &reqwest::Client,
@@ -186,6 +196,7 @@ pub async fn refresh(
     }
 }
 
+/// Finds the logins that `provider`'s own tools stored on this machine.
 pub fn discover(provider: Provider) -> Result<Vec<Discovered>> {
     match provider {
         Provider::Claude => claude::discover(),

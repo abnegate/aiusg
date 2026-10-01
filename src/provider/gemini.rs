@@ -1,3 +1,5 @@
+//! Gemini Code Assist, through the Google login that the Gemini CLI stores.
+
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
@@ -111,6 +113,7 @@ async fn load(http: &reqwest::Client, credential: &Credential) -> Result<LoadRes
     read_json(response, "Gemini profile").await
 }
 
+/// Reads the plan and per-model request quotas for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let loaded = load(http, credential).await?;
     let plan = loaded
@@ -176,6 +179,7 @@ impl TokenResponse {
     }
 }
 
+/// Signs in to Google in the browser and returns the new login.
 #[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let client = client()?;
@@ -254,6 +258,8 @@ async fn email(http: &reqwest::Client, credential: &Credential) -> Option<String
     info.email
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -320,6 +326,8 @@ fn client() -> Result<Client> {
     Ok(Client { id, secret })
 }
 
+/// Finds the login the Gemini CLI stored in its home: the one
+/// `GEMINI_CLI_HOME` names, `~/.gemini` by default.
 pub fn discover() -> Result<Vec<Discovered>> {
     let Some(home) = home(HOME_ENV, HOME_DIRECTORY) else {
         return Ok(Vec::new());

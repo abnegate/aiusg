@@ -2,16 +2,20 @@ use serde::Deserialize;
 
 const UUID_PREFIX: usize = 8;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 /// The account half of a [`Profile`](super::Profile).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
 pub struct ProfileAccount {
+    /// The account's unique id.
     #[serde(default)]
     pub uuid: Option<String>,
+    /// The account's email address.
     #[serde(default)]
     pub email: Option<String>,
+    /// The name the user chose to be shown by.
     #[serde(default)]
     pub display_name: Option<String>,
+    /// The user's full name.
     #[serde(default)]
     pub full_name: Option<String>,
 }

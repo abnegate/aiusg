@@ -2,12 +2,14 @@ use serde::Deserialize;
 
 use super::{ProfileAccount, ProfileOrganization};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 /// The Claude account profile.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[non_exhaustive]
 pub struct Profile {
+    /// The signed-in user.
     #[serde(default)]
     pub account: Option<ProfileAccount>,
+    /// The organization the user works in, which holds the plan.
     #[serde(default)]
     pub organization: Option<ProfileOrganization>,
 }
