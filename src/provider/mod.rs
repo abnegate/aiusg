@@ -69,6 +69,9 @@ fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
     };
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
     serde_json::from_str(&raw)
         .map(Some)
         .with_context(|| format!("parsing {}", path.display()))
@@ -295,6 +298,18 @@ mod tests {
             format!("{broken:#}").contains("parsing"),
             "the error names what failed: {broken:#}"
         );
+    }
+
+    #[test]
+    fn a_blank_file_loads_as_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("auth.json");
+
+        for blank in ["", "  \n\t\n"] {
+            std::fs::write(&path, blank).unwrap();
+            let loaded: Option<serde_json::Value> = load(&path).unwrap();
+            assert!(loaded.is_none(), "{blank:?} holds nothing to parse");
+        }
     }
 
     #[cfg(not(feature = "copilot"))]
