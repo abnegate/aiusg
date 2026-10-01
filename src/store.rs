@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[cfg(not(feature = "keychain"))]
+use anyhow::bail;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,7 +15,6 @@ use crate::model::{Account, AccountId, Provider};
 const KEYRING_SERVICE: &str = "aiusg";
 const ACCOUNTS_FILE: &str = "accounts.json";
 const CREDENTIALS_FILE: &str = "credentials.json";
-#[cfg(feature = "keychain")]
 const KEYCHAIN_ENV: &str = "AIUSG_KEYCHAIN";
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -50,24 +51,32 @@ impl Credential {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Backend {
+enum Backend {
     File,
     #[cfg(feature = "keychain")]
     Keychain,
 }
 
 impl Backend {
-    #[cfg(feature = "keychain")]
-    fn from_env() -> Self {
-        match std::env::var(KEYCHAIN_ENV).as_deref() {
-            Ok("1") | Ok("true") => Backend::Keychain,
-            _ => Backend::File,
+    fn from_env() -> Result<Self> {
+        Self::from_setting(std::env::var(KEYCHAIN_ENV).ok().as_deref())
+    }
+
+    fn from_setting(setting: Option<&str>) -> Result<Self> {
+        match setting {
+            Some("1" | "true") => Self::keychain(),
+            _ => Ok(Backend::File),
         }
     }
 
+    #[cfg(feature = "keychain")]
+    fn keychain() -> Result<Self> {
+        Ok(Backend::Keychain)
+    }
+
     #[cfg(not(feature = "keychain"))]
-    fn from_env() -> Self {
-        Backend::File
+    fn keychain() -> Result<Self> {
+        bail!("keychain storage is not in this build; enable the `keychain` feature")
     }
 }
 
@@ -107,7 +116,7 @@ impl Store {
 
         Ok(Self {
             directory,
-            backend: Backend::from_env(),
+            backend: Backend::from_env()?,
             guard: Arc::new(Mutex::new(())),
         })
     }
@@ -308,4 +317,44 @@ fn restrict(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn restrict(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credentials_are_kept_in_a_file_unless_the_keychain_is_asked_for() {
+        for setting in [None, Some(""), Some("0"), Some("false"), Some("yes")] {
+            assert_eq!(
+                Backend::from_setting(setting).unwrap(),
+                Backend::File,
+                "{setting:?} does not ask for the keychain"
+            );
+        }
+    }
+
+    #[cfg(feature = "keychain")]
+    #[test]
+    fn asking_for_the_keychain_uses_it() {
+        for setting in ["1", "true"] {
+            assert_eq!(
+                Backend::from_setting(Some(setting)).unwrap(),
+                Backend::Keychain
+            );
+        }
+    }
+
+    #[cfg(not(feature = "keychain"))]
+    #[test]
+    fn asking_for_the_keychain_without_the_feature_is_refused() {
+        for setting in ["1", "true"] {
+            let error = Backend::from_setting(Some(setting))
+                .expect_err("plaintext storage must not stand in for the keychain");
+            assert_eq!(
+                error.to_string(),
+                "keychain storage is not in this build; enable the `keychain` feature"
+            );
+        }
+    }
 }
