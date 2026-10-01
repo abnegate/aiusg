@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 
 pub use availability::Availability;
 
+const COPILOT_FEATURE: &str = "copilot";
+const CURSOR_FEATURE: &str = "cursor";
+const GROKBOT_FEATURE: &str = "grokbot";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -58,8 +62,19 @@ impl Provider {
 
     pub fn feature(self) -> Option<&'static str> {
         match self {
-            Provider::Copilot | Provider::GrokBot | Provider::Cursor => Some(self.slug()),
+            Provider::Copilot => Some(COPILOT_FEATURE),
+            Provider::Cursor => Some(CURSOR_FEATURE),
+            Provider::GrokBot => Some(GROKBOT_FEATURE),
             Provider::Claude | Provider::Codex | Provider::Gemini | Provider::Grok => None,
+        }
+    }
+
+    pub fn is_built(self) -> bool {
+        match self {
+            Provider::Copilot => cfg!(feature = "copilot"),
+            Provider::Cursor => cfg!(feature = "cursor"),
+            Provider::GrokBot => cfg!(feature = "grokbot"),
+            Provider::Claude | Provider::Codex | Provider::Gemini | Provider::Grok => true,
         }
     }
 }
@@ -576,6 +591,19 @@ mod tests {
             Provider::Grok,
         ] {
             assert_eq!(provider.feature(), None, "{provider} is always built");
+        }
+    }
+
+    #[test]
+    fn a_provider_is_built_exactly_when_its_feature_is_enabled() {
+        assert_eq!(Provider::Copilot.is_built(), cfg!(feature = "copilot"));
+        assert_eq!(Provider::Cursor.is_built(), cfg!(feature = "cursor"));
+        assert_eq!(Provider::GrokBot.is_built(), cfg!(feature = "grokbot"));
+        for provider in Provider::ALL
+            .into_iter()
+            .filter(|provider| provider.feature().is_none())
+        {
+            assert!(provider.is_built(), "{provider} needs no feature");
         }
     }
 
