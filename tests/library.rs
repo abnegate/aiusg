@@ -15,6 +15,7 @@ const CODEX_USAGE: &str = "/backend-api/wham/usage";
 const CLAUDE_TOKEN: &str = "sk-ant-oat01-zone";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const TIMEOUT: Duration = Duration::from_secs(5);
+const PROMPT: Duration = Duration::from_secs(1);
 
 const CLAUDE_USAGE_BODY: &str = r#"{"limits":[{"kind":"session","percent":62,"resets_at":"2026-09-23T06:10:00Z","scope":null},{"kind":"weekly_all","percent":31,"resets_at":"2026-09-28T04:00:00Z","scope":null}],"extra_usage":{"is_enabled":false}}"#;
 const CLAUDE_EXHAUSTED_BODY: &str = r#"{"limits":[{"kind":"session","percent":40,"resets_at":"2026-10-01T05:00:00Z"},{"kind":"weekly_all","percent":100,"resets_at":"2026-10-08T04:00:00Z"}]}"#;
@@ -180,6 +181,26 @@ async fn a_refused_usage_token_is_signed_out() {
         !is_signed_out(&failed),
         "a server error is not a sign-out: {failed:#}"
     );
+}
+
+#[tokio::test]
+async fn a_refused_usage_token_does_not_wait_for_the_profile() {
+    let mock = Mock::serve([
+        (CLAUDE_USAGE, Reply::status(401)),
+        (CLAUDE_PROFILE, Reply::stall()),
+    ])
+    .await;
+    let http = http();
+
+    let refused = tokio::time::timeout(
+        PROMPT,
+        claude::fetch_at(&http, mock.base(), &Credential::bearer(CLAUDE_TOKEN)),
+    )
+    .await
+    .expect("a refused usage request returns well within the client timeout")
+    .expect_err("a 401 from the usage endpoint fails the fetch");
+
+    assert!(is_signed_out(&refused), "{refused:#}");
 }
 
 #[tokio::test]

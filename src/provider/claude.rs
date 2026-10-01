@@ -170,16 +170,14 @@ pub async fn fetch_at(
     base: &str,
     credential: &Credential,
 ) -> Result<Fetched> {
-    let (usage, profile) = tokio::join!(
-        usage_at(http, base, &credential.access_token),
-        profile_at(http, base, &credential.access_token),
-    );
+    let (usage, profile) =
+        tokio::try_join!(usage_at(http, base, &credential.access_token), async {
+            anyhow::Ok(profile_at(http, base, &credential.access_token).await.ok())
+        },)?;
 
     Ok(Fetched {
-        plan: profile
-            .ok()
-            .and_then(|profile| profile.plan().map(str::to_owned)),
-        windows: windows(usage?),
+        plan: profile.and_then(|profile| profile.plan().map(str::to_owned)),
+        windows: windows(usage),
     })
 }
 
