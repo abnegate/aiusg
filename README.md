@@ -155,7 +155,13 @@ async fn main() -> anyhow::Result<()> {
         Ok(fetched) => {
             let usage = fetched.into_usage(&account);
             for window in &usage.windows {
-                println!("{}: {:?}% used, resets {:?}", window.name, window.used_percent, window.resets_at);
+                let used = window
+                    .used_percent
+                    .map_or_else(|| "unknown".to_owned(), |percent| format!("{percent:.0}%"));
+                let resets = window
+                    .resets_at
+                    .map_or_else(|| "no reset reported".to_owned(), |at| format!("resets {at}"));
+                println!("{}: {used} used, {resets}", window.name);
             }
             match usage.availability() {
                 Availability::Now => println!("{:.0}% headroom", usage.headroom()),
