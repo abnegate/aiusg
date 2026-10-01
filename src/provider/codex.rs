@@ -1,20 +1,27 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+#[cfg(feature = "login")]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
 use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
-use crate::oauth::{Loopback, Pkce, decode_jwt_claims, prompt_open, random_token};
+use crate::oauth::decode_jwt_claims;
+#[cfg(feature = "login")]
+use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
 use crate::provider::{Discovered, Fetched};
 use crate::store::Credential;
 
 const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+#[cfg(feature = "login")]
 const SCOPES: &str =
     "openid profile email offline_access api.connectors.read api.connectors.invoke";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 2] = [1455, 1457];
 const ORIGINATOR: &str = "codex_cli_rs";
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"), " (codex_cli_rs)");
@@ -153,6 +160,7 @@ fn collect(limit: RateLimit, primary: &str, secondary: &str) -> Vec<Window> {
     .collect()
 }
 
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
     let state = random_token(32);

@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{Account, AccountId, Provider};
 
+#[cfg(feature = "keychain")]
 const KEYRING_SERVICE: &str = "aiusg";
 const ACCOUNTS_FILE: &str = "accounts.json";
 const CREDENTIALS_FILE: &str = "credentials.json";
+#[cfg(feature = "keychain")]
 const KEYCHAIN_ENV: &str = "AIUSG_KEYCHAIN";
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -50,15 +52,22 @@ impl Credential {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     File,
+    #[cfg(feature = "keychain")]
     Keychain,
 }
 
 impl Backend {
+    #[cfg(feature = "keychain")]
     fn from_env() -> Self {
         match std::env::var(KEYCHAIN_ENV).as_deref() {
             Ok("1") | Ok("true") => Backend::Keychain,
             _ => Backend::File,
         }
+    }
+
+    #[cfg(not(feature = "keychain"))]
+    fn from_env() -> Self {
+        Backend::File
     }
 }
 
@@ -161,6 +170,7 @@ impl Store {
 
     pub fn credential(&self, id: &AccountId) -> Result<Credential> {
         match self.backend {
+            #[cfg(feature = "keychain")]
             Backend::Keychain => {
                 let raw = entry(id)?
                     .get_password()
@@ -180,6 +190,7 @@ impl Store {
 
     pub fn write_credential(&self, id: &AccountId, credential: &Credential) -> Result<()> {
         match self.backend {
+            #[cfg(feature = "keychain")]
             Backend::Keychain => {
                 let raw = serde_json::to_string(credential)?;
                 entry(id)?
@@ -198,6 +209,7 @@ impl Store {
 
     fn forget_credential(&self, id: &AccountId) -> Result<()> {
         match self.backend {
+            #[cfg(feature = "keychain")]
             Backend::Keychain => entry(id)?.delete_credential().map_err(Into::into),
             Backend::File => {
                 let _lock = self.guard.lock().unwrap_or_else(|error| error.into_inner());
@@ -279,6 +291,7 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     fs::rename(&temporary, path).with_context(|| format!("replacing {}", path.display()))
 }
 
+#[cfg(feature = "keychain")]
 fn entry(id: &AccountId) -> Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, id.as_str())
         .with_context(|| format!("opening the keyring entry for {id}"))

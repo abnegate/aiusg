@@ -1,22 +1,29 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+#[cfg(feature = "login")]
+use anyhow::bail;
+use anyhow::{Context, Result};
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
-use crate::oauth::{Loopback, Pkce, decode_jwt_claims, prompt_open, random_token};
+use crate::oauth::decode_jwt_claims;
+#[cfg(feature = "login")]
+use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
 use crate::provider::{Discovered, Fetched};
 use crate::store::Credential;
 
 const DEFAULT_BASE: &str = "https://cli-chat-proxy.grok.com/v1";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://auth.x.ai/oauth2/authorize";
 const TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
 const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+#[cfg(feature = "login")]
 const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access \
      conversations:read conversations:write workspaces:read workspaces:write";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 4] = [8111, 8112, 8113, 0];
 const TOKEN_AUTH: &str = "xai-grok-cli";
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"));
@@ -182,6 +189,7 @@ fn jwt_tier(credential: &Credential) -> Option<String> {
     Some(format!("tier {tier}"))
 }
 
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
     let state = random_token(32);
@@ -235,6 +243,7 @@ pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     })
 }
 
+#[cfg(feature = "login")]
 fn identify(credential: &Credential) -> Option<String> {
     let claims = decode_jwt_claims(&credential.access_token).ok()?;
     claims
@@ -420,7 +429,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "login"))]
 mod scope_tests {
     use super::SCOPES;
 

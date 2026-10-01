@@ -51,6 +51,13 @@ impl Provider {
             Provider::Cursor => "Cursor",
         }
     }
+
+    pub fn feature(self) -> Option<&'static str> {
+        match self {
+            Provider::Copilot | Provider::GrokBot | Provider::Cursor => Some(self.slug()),
+            Provider::Claude | Provider::Codex | Provider::Gemini | Provider::Grok => None,
+        }
+    }
 }
 
 impl fmt::Display for Provider {
@@ -478,6 +485,21 @@ mod tests {
         for provider in Provider::ALL {
             let parsed: Provider = provider.slug().parse().expect("slug should parse");
             assert_eq!(parsed, provider);
+        }
+    }
+
+    #[test]
+    fn optional_providers_name_their_feature() {
+        assert_eq!(Provider::Copilot.feature(), Some("copilot"));
+        assert_eq!(Provider::Cursor.feature(), Some("cursor"));
+        assert_eq!(Provider::GrokBot.feature(), Some("grokbot"));
+        for provider in [
+            Provider::Claude,
+            Provider::Codex,
+            Provider::Gemini,
+            Provider::Grok,
+        ] {
+            assert_eq!(provider.feature(), None, "{provider} is always built");
         }
     }
 

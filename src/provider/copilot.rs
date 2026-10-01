@@ -1,8 +1,10 @@
+#[cfg(feature = "login")]
+mod device;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use serde::Deserialize;
 
@@ -10,10 +12,11 @@ use crate::model::{Account, Provider, Window};
 use crate::provider::{Discovered, Fetched};
 use crate::store::Credential;
 
+#[cfg(feature = "login")]
+pub use device::login;
+
 const USAGE_URL: &str = "https://api.github.com/copilot_internal/user";
-const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
-const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-const CLIENT_ID: &str = "Ov23ctr1Udn5GokVCVJf";
+#[cfg(feature = "keychain")]
 const KEYCHAIN_SERVICE: &str = "github-copilot-app";
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"));
 
@@ -112,107 +115,6 @@ fn parse_reset_date(value: Option<&str>) -> Option<DateTime<Utc>> {
         .single()
 }
 
-#[derive(Debug, Deserialize)]
-struct DeviceCode {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    #[serde(default = "default_interval")]
-    interval: u64,
-}
-
-fn default_interval() -> u64 {
-    5
-}
-
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: Option<String>,
-    error: Option<String>,
-}
-
-pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
-    let device: DeviceCode = http
-        .post(DEVICE_CODE_URL)
-        .header("Accept", "application/json")
-        .header("User-Agent", USER_AGENT)
-        .json(&serde_json::json!({ "client_id": CLIENT_ID, "scope": "read:user" }))
-        .send()
-        .await
-        .context("requesting GitHub device code")?
-        .json()
-        .await
-        .context("parsing GitHub device code")?;
-
-    println!(
-        "  Open {} and enter code: {}",
-        device.verification_uri, device.user_code
-    );
-    let _ = webbrowser::open(&device.verification_uri);
-
-    let token = poll_for_token(http, &device).await?;
-    let login = current_login(http, &token).await?;
-
-    Ok(Discovered {
-        account: Account::new(Provider::Copilot, login, None),
-        credential: Credential::bearer(token),
-    })
-}
-
-async fn poll_for_token(http: &reqwest::Client, device: &DeviceCode) -> Result<String> {
-    let mut interval = Duration::from_secs(device.interval);
-    loop {
-        tokio::time::sleep(interval).await;
-        let response: TokenResponse = http
-            .post(ACCESS_TOKEN_URL)
-            .header("Accept", "application/json")
-            .header("User-Agent", USER_AGENT)
-            .json(&serde_json::json!({
-                "client_id": CLIENT_ID,
-                "device_code": device.device_code,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            }))
-            .send()
-            .await
-            .context("polling GitHub for authorization")?
-            .json()
-            .await
-            .context("parsing GitHub token response")?;
-
-        if let Some(token) = response.access_token {
-            return Ok(token);
-        }
-        match response.error.as_deref() {
-            Some("authorization_pending") => {}
-            Some("slow_down") => interval += Duration::from_secs(5),
-            Some("expired_token") => bail!("the device code expired before you authorized it"),
-            Some("access_denied") => bail!("authorization was denied"),
-            Some(other) => bail!("GitHub returned '{other}'"),
-            None => bail!("GitHub returned no token and no error"),
-        }
-    }
-}
-
-async fn current_login(http: &reqwest::Client, token: &str) -> Result<String> {
-    #[derive(Deserialize)]
-    struct User {
-        login: String,
-    }
-
-    let user: User = http
-        .get("https://api.github.com/user")
-        .header("Authorization", format!("token {token}"))
-        .header("User-Agent", USER_AGENT)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .context("identifying the authorized GitHub user")?
-        .json()
-        .await
-        .context("parsing the GitHub user response")?;
-    Ok(user.login)
-}
-
 pub fn discover() -> Result<Vec<Discovered>> {
     let mut found = from_apps_file().unwrap_or_default();
     if found.is_empty()
@@ -290,12 +192,18 @@ fn from_database() -> Result<Vec<Discovered>> {
     Ok(found)
 }
 
+#[cfg(feature = "keychain")]
 fn keychain_token(account: &str) -> Option<String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, account)
         .ok()?
         .get_password()
         .ok()
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(not(feature = "keychain"))]
+fn keychain_token(_account: &str) -> Option<String> {
+    None
 }
 
 pub async fn refresh(

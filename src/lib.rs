@@ -1,5 +1,8 @@
+#[cfg(feature = "cli")]
 pub mod app;
+#[cfg(feature = "cli")]
 pub mod cli;
+#[cfg(feature = "cli")]
 pub mod mcp;
 pub mod model;
 pub mod oauth;

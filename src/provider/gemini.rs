@@ -6,16 +6,20 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::model::{Account, Provider, Window};
+#[cfg(feature = "login")]
 use crate::oauth::{Loopback, prompt_open, random_token};
 use crate::provider::{Discovered, Fetched};
 use crate::store::Credential;
 
 const CODE_ASSIST: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const CLIENT_ID_ENV: &str = "AIUSG_GEMINI_CLIENT_ID";
 const CLIENT_SECRET_ENV: &str = "AIUSG_GEMINI_CLIENT_SECRET";
+#[cfg(feature = "login")]
 const SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 4] = [8085, 8086, 8087, 0];
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"), " (GeminiCLI)");
 const PROJECT: &str = "project";
@@ -170,6 +174,7 @@ impl TokenResponse {
     }
 }
 
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let client = client()?;
     let state = random_token(32);
@@ -225,6 +230,7 @@ pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     })
 }
 
+#[cfg(feature = "login")]
 async fn email(http: &reqwest::Client, credential: &Credential) -> Option<String> {
     #[derive(Deserialize)]
     struct Info {

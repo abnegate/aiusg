@@ -1,23 +1,29 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+#[cfg(feature = "login")]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
+#[cfg(feature = "keychain")]
 use sha2::{Digest, Sha256};
 
 use crate::model::{Account, Provider, Window};
+#[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
 use crate::provider::{Discovered, Fetched};
 use crate::store::Credential;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://claude.com/cai/oauth/authorize";
 const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const SCOPES: &str =
     "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 4] = [54545, 54546, 54547, 0];
 const USER_AGENT: &str = "claude-code/2.1.251";
 
@@ -83,12 +89,14 @@ struct ExtraUsage {
 
 #[derive(Debug, Default, Deserialize)]
 struct Profile {
+    #[cfg(feature = "login")]
     #[serde(default)]
     account: Option<ProfileAccount>,
     #[serde(default)]
     organization: Option<ProfileOrganization>,
 }
 
+#[cfg(feature = "login")]
 #[derive(Debug, Default, Deserialize)]
 struct ProfileAccount {
     #[serde(default)]
@@ -211,6 +219,7 @@ async fn plan(http: &reqwest::Client, credential: &Credential) -> Option<String>
     organization.rate_limit_tier.or(organization.billing_type)
 }
 
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
     let state = random_token(32);
@@ -265,6 +274,7 @@ pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     })
 }
 
+#[cfg(feature = "login")]
 async fn identify(http: &reqwest::Client, credential: &Credential) -> String {
     profile(http, credential)
         .await
@@ -388,6 +398,7 @@ pub fn discover() -> Result<Vec<Discovered>> {
     }])
 }
 
+#[cfg(feature = "keychain")]
 fn keychain_service() -> String {
     match std::env::var("CLAUDE_CONFIG_DIR") {
         Ok(directory) if !directory.is_empty() => {
@@ -405,6 +416,7 @@ fn keychain_service() -> String {
     }
 }
 
+#[cfg(feature = "keychain")]
 fn keychain_credentials() -> Option<Option<StoredCredentials>> {
     let user = std::env::var("USER").ok()?;
     let raw = keyring::Entry::new(&keychain_service(), &user)
@@ -412,6 +424,11 @@ fn keychain_credentials() -> Option<Option<StoredCredentials>> {
         .get_password()
         .ok()?;
     Some(serde_json::from_str(&raw).ok())
+}
+
+#[cfg(not(feature = "keychain"))]
+fn keychain_credentials() -> Option<Option<StoredCredentials>> {
+    None
 }
 
 fn fallback_path() -> Option<PathBuf> {
@@ -492,6 +509,7 @@ mod tests {
         )
         .expect("profile should parse");
 
+        #[cfg(feature = "login")]
         assert_eq!(
             profile.account.unwrap().email.as_deref(),
             Some("jake@example.com"),
