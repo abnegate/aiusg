@@ -327,13 +327,19 @@ struct StoredAccount {
 
 pub fn discover() -> Result<Vec<Discovered>> {
     match home(HOME_ENV, HOME_DIRECTORY) {
-        Some(home) => discover_in(&home),
+        Some(directory) => discover_in(&directory),
         None => Ok(Vec::new()),
     }
 }
 
-pub fn discover_in(home: &Path) -> Result<Vec<Discovered>> {
-    let stored: BTreeMap<String, StoredAccount> = load(&home.join(AUTH_FILE))?.unwrap_or_default();
+/// Reads every login that the Grok CLI stored in `directory`, its own home: the
+/// one `GROK_HOME` names, `~/.grok` by default, not the user's home.
+///
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: BTreeMap<String, StoredAccount> =
+        load(&directory.join(AUTH_FILE))?.unwrap_or_default();
 
     let mut found = Vec::new();
     for (issuer, account) in stored {

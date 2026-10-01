@@ -3,6 +3,7 @@ use serde::Deserialize;
 use super::{ProfileAccount, ProfileOrganization};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+/// The Claude account profile.
 #[non_exhaustive]
 pub struct Profile {
     #[serde(default)]
@@ -12,10 +13,12 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// The account's label, as [`ProfileAccount::label`] gives it.
     pub fn label(&self) -> Option<&str> {
         self.account.as_ref()?.label()
     }
 
+    /// The organization's plan, as [`ProfileOrganization::plan`] gives it.
     pub fn plan(&self) -> Option<&str> {
         self.organization.as_ref()?.plan()
     }

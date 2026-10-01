@@ -22,6 +22,7 @@ pub use profile::Profile;
 pub use profile_account::ProfileAccount;
 pub use profile_organization::ProfileOrganization;
 
+/// The origin of the Claude API that [`fetch`] and [`profile`] read from.
 pub const BASE: &str = "https://api.anthropic.com";
 const USAGE_PATH: &str = "/api/oauth/usage";
 const PROFILE_PATH: &str = "/api/oauth/profile";
@@ -165,6 +166,16 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
     fetch_at(http, BASE, credential).await
 }
 
+/// Reads the usage windows for `credential` from `base`, along with the plan
+/// from the account profile.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// The plan is `None` when the profile cannot be read, so a profile failure
+/// never fails the fetch and a caller needs no separate [`profile_at`] for the
+/// plan. A refused token is an error that [`is_signed_out`] recognises.
+///
+/// [`is_signed_out`]: crate::provider::is_signed_out
 pub async fn fetch_at(
     http: &reqwest::Client,
     base: &str,
@@ -189,10 +200,17 @@ async fn usage_at(http: &reqwest::Client, base: &str, access_token: &str) -> Res
     read_json(response, "Claude usage").await
 }
 
+/// Reads the account profile for `access_token` from [`BASE`].
 pub async fn profile(http: &reqwest::Client, access_token: &str) -> Result<Profile> {
     profile_at(http, BASE, access_token).await
 }
 
+/// Reads the account profile for `access_token` from `base`.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// [`fetch_at`] already carries the profile's plan; this is for the account
+/// label, or for the profile on its own.
 pub async fn profile_at(http: &reqwest::Client, base: &str, access_token: &str) -> Result<Profile> {
     let response = request(http, access_token, &endpoint(base, PROFILE_PATH))
         .send()
@@ -352,6 +370,13 @@ pub fn discover() -> Result<Vec<Discovered>> {
     }
 }
 
+/// Reads the login that Claude Code stored in `directory`, its configuration
+/// directory: the one `CLAUDE_CONFIG_DIR` names, `~/.claude` by default, not
+/// the user's home.
+///
+/// Claude Code stores one login per directory, so the list holds at most one.
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
 pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
     let stored: Option<StoredCredentials> = load(&directory.join(CREDENTIALS_FILE))?;
     Ok(stored.map(discovered).unwrap_or_default())

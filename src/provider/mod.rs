@@ -24,10 +24,13 @@ use crate::store::Credential;
 
 pub use unsupported::Unsupported;
 
+/// A provider refused the credential with HTTP 401 or 403.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct SignedOut(pub String);
 
+/// Whether `error` means the account is signed out: a [`SignedOut`], from a
+/// 401 or 403, anywhere in its chain, however much context wraps it.
 pub fn is_signed_out(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<SignedOut>())
 }
@@ -85,6 +88,7 @@ where
     Ok(Option::deserialize(deserializer)?.unwrap_or_default())
 }
 
+/// What one fetch read from a provider, before it is tied to an account.
 #[derive(Clone, Debug, Default)]
 pub struct Fetched {
     pub plan: Option<String>,
@@ -92,10 +96,15 @@ pub struct Fetched {
 }
 
 impl Fetched {
+    /// The [`Usage`] of `account`, fetched now.
     pub fn into_usage(self, account: &Account) -> Usage {
         self.into_usage_at(account, Utc::now())
     }
 
+    /// The [`Usage`] of `account`, fetched at `fetched_at`.
+    ///
+    /// A plan from the fetch replaces the account's stored plan; without one,
+    /// the stored plan stays.
     pub fn into_usage_at(self, account: &Account, fetched_at: DateTime<Utc>) -> Usage {
         Usage {
             account: account.id.clone(),

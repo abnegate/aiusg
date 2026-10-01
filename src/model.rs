@@ -60,6 +60,8 @@ impl Provider {
         }
     }
 
+    /// The Cargo feature that adds this provider, or `None` when every build
+    /// has it.
     pub fn feature(self) -> Option<&'static str> {
         match self {
             Provider::Copilot => Some(COPILOT_FEATURE),
@@ -69,6 +71,8 @@ impl Provider {
         }
     }
 
+    /// Whether this build has the provider. Calling one it lacks returns
+    /// [`Unsupported`](crate::provider::Unsupported).
     pub fn is_built(self) -> bool {
         match self {
             Provider::Copilot => cfg!(feature = "copilot"),
@@ -222,6 +226,9 @@ impl Usage {
             .map_or(100.0, |used| 100.0 - used)
     }
 
+    /// When the account can take work again: [`Availability::Now`] when no
+    /// window is spent, otherwise when the last spent window resets, or
+    /// [`Availability::Unknown`] when a spent window reports no reset.
     pub fn availability(&self) -> Availability {
         self.windows
             .iter()
