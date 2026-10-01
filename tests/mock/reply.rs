@@ -2,6 +2,7 @@
 pub struct Reply {
     pub status: u16,
     pub body: String,
+    pub stalls: bool,
 }
 
 impl Reply {
@@ -9,6 +10,7 @@ impl Reply {
         Self {
             status: 200,
             body: body.into(),
+            stalls: false,
         }
     }
 
@@ -16,6 +18,14 @@ impl Reply {
         Self {
             status,
             body: "{}".to_owned(),
+            stalls: false,
+        }
+    }
+
+    pub fn stall() -> Self {
+        Self {
+            stalls: true,
+            ..Self::status(200)
         }
     }
 }

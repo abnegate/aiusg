@@ -82,6 +82,9 @@ async fn answer(mut stream: TcpStream, routes: Routes, recorded: Recorded) {
         .cloned()
         .unwrap_or_else(|| Reply::status(404));
     recorded.lock().unwrap().push(request);
+    if reply.stalls {
+        std::future::pending::<()>().await;
+    }
 
     let response = format!(
         "HTTP/1.1 {} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

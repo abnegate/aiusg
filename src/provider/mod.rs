@@ -10,11 +10,12 @@ pub mod grok;
 pub mod grokbot;
 mod unsupported;
 
+use std::ffi::OsString;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -23,10 +24,13 @@ use crate::store::Credential;
 
 pub use unsupported::Unsupported;
 
+/// A provider refused the credential with HTTP 401 or 403.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct SignedOut(pub String);
 
+/// Whether `error` means the account is signed out: a [`SignedOut`], from a
+/// 401 or 403, anywhere in its chain, however much context wraps it.
 pub fn is_signed_out(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<SignedOut>())
 }
@@ -54,12 +58,23 @@ fn endpoint(base: &str, path: &str) -> String {
     format!("{}{path}", base.trim_end_matches('/'))
 }
 
+fn home(variable: &str, default: &str) -> Option<PathBuf> {
+    named(std::env::var_os(variable)).or_else(|| Some(dirs::home_dir()?.join(default)))
+}
+
+fn named(value: Option<OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
+}
+
 fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     let raw = match std::fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
     };
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
     serde_json::from_str(&raw)
         .map(Some)
         .with_context(|| format!("parsing {}", path.display()))
@@ -73,6 +88,7 @@ where
     Ok(Option::deserialize(deserializer)?.unwrap_or_default())
 }
 
+/// What one fetch read from a provider, before it is tied to an account.
 #[derive(Clone, Debug, Default)]
 pub struct Fetched {
     pub plan: Option<String>,
@@ -80,14 +96,23 @@ pub struct Fetched {
 }
 
 impl Fetched {
+    /// The [`Usage`] of `account`, fetched now.
     pub fn into_usage(self, account: &Account) -> Usage {
+        self.into_usage_at(account, Utc::now())
+    }
+
+    /// The [`Usage`] of `account`, fetched at `fetched_at`.
+    ///
+    /// A plan from the fetch replaces the account's stored plan; without one,
+    /// the stored plan stays.
+    pub fn into_usage_at(self, account: &Account, fetched_at: DateTime<Utc>) -> Usage {
         Usage {
             account: account.id.clone(),
             provider: account.provider,
             label: account.label.clone(),
             plan: self.plan.or_else(|| account.plan.clone()),
             windows: self.windows,
-            fetched_at: Utc::now(),
+            fetched_at,
         }
     }
 }
@@ -235,6 +260,24 @@ mod tests {
     }
 
     #[test]
+    fn a_fetch_is_stamped_now_unless_the_caller_names_the_time() {
+        let account = Account::new(Provider::Claude, "jake@example.com", None);
+        let named = DateTime::parse_from_rfc3339("2026-10-01T04:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let stamped = Fetched::default().into_usage_at(&account, named);
+        assert_eq!(stamped.fetched_at, named);
+
+        let before = Utc::now();
+        let current = Fetched::default().into_usage(&account);
+        assert!(
+            (before..=Utc::now()).contains(&current.fetched_at),
+            "into_usage stamps the time of the call"
+        );
+    }
+
+    #[test]
     fn an_endpoint_joins_a_base_with_or_without_a_trailing_slash() {
         assert_eq!(
             endpoint("http://127.0.0.1:8080", "/api/oauth/usage"),
@@ -243,6 +286,32 @@ mod tests {
         assert_eq!(
             endpoint("http://127.0.0.1:8080/", "/api/oauth/usage"),
             "http://127.0.0.1:8080/api/oauth/usage"
+        );
+    }
+
+    #[test]
+    fn a_home_variable_names_the_directory_when_it_is_set() {
+        assert_eq!(
+            named(Some(OsString::from("/srv/codex"))),
+            Some(PathBuf::from("/srv/codex"))
+        );
+    }
+
+    #[test]
+    fn an_empty_home_variable_counts_as_unset() {
+        assert_eq!(
+            named(Some(OsString::new())),
+            None,
+            "an empty value must not resolve to the working directory"
+        );
+        assert_eq!(named(None), None);
+    }
+
+    #[test]
+    fn an_unset_home_variable_falls_back_under_the_user_home() {
+        assert_eq!(
+            home("AIUSG_TEST_VARIABLE_THAT_IS_NEVER_SET", ".codex"),
+            dirs::home_dir().map(|directory| directory.join(".codex"))
         );
     }
 
@@ -260,6 +329,18 @@ mod tests {
             format!("{broken:#}").contains("parsing"),
             "the error names what failed: {broken:#}"
         );
+    }
+
+    #[test]
+    fn a_blank_file_loads_as_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("auth.json");
+
+        for blank in ["", "  \n\t\n"] {
+            std::fs::write(&path, blank).unwrap();
+            let loaded: Option<serde_json::Value> = load(&path).unwrap();
+            assert!(loaded.is_none(), "{blank:?} holds nothing to parse");
+        }
     }
 
     #[cfg(not(feature = "copilot"))]

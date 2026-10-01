@@ -29,11 +29,20 @@ cli = [
     "dep:rmcp",
     "dep:schemars",
     "dep:futures",
+    "tokio/rt-multi-thread",
 ]
-login = ["dep:webbrowser"]
-keychain = ["dep:keyring"]
+login = [
+    "dep:webbrowser",
+    "dep:rand",
+    "dep:sha2",
+    "dep:url",
+    "tokio/net",
+    "tokio/io-util",
+    "tokio/time",
+]
+keychain = ["dep:keyring", "dep:sha2"]
 copilot = ["dep:rusqlite"]
-cursor = ["dep:rusqlite"]
+cursor = ["dep:rusqlite", "dep:url"]
 grokbot = ["cursor"]
 
 [dependencies]
@@ -46,16 +55,16 @@ dirs = "7.0.0"
 futures = { version = "0.3.34", optional = true }
 keyring = { version = "4.2.0", optional = true }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls", "gzip", "http2", "charset", "system-proxy"] }
-rand = "0.10.2"
+rand = { version = "0.10.2", optional = true }
 rmcp = { version = "3.2.*", features = ["transport-io"], optional = true }
 schemars = { version = "1.1.*", optional = true }
 rusqlite = { version = "0.40.2", features = ["bundled"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-sha2 = "0.11.0"
+sha2 = { version = "0.11.0", optional = true }
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "sync", "time"] }
-url = "2.5.8"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+url = { version = "2.5.8", optional = true }
 webbrowser = { version = "1.2.4", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -69,6 +78,7 @@ keyring = { version = "4.2.0", features = ["dbus-secret-service-keyring-store"],
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["macros", "rt", "rt-multi-thread", "net", "io-util", "time"] }
 
 [profile.release]
 lto = true

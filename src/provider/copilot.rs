@@ -9,7 +9,7 @@ use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, read_json};
 use crate::store::Credential;
 
 #[cfg(feature = "login")]
@@ -59,7 +59,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Copilot usage")?;
 
-    let usage: UsageResponse = crate::provider::read_json(response, "Copilot usage").await?;
+    let usage: UsageResponse = read_json(response, "Copilot usage").await?;
     Ok(Fetched {
         plan: usage.copilot_plan.clone().or_else(|| usage.login.clone()),
         windows: windows(usage),

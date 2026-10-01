@@ -5,7 +5,7 @@ One place to see how much of your AI subscription you have left.
 Authenticate any number of accounts — including several on the same provider — and
 `aiusg` fetches every account's limits in parallel and prints them as one table.
 
-```
+```text
   Codex     jake@example.com  pro
     7d                     ████████████████████ 100%              resets in 5d 21h
     GPT-5.3-Codex-Spark 5h ░░░░░░░░░░░░░░░░░░░░   0%              resets in 4h 59m
@@ -119,7 +119,7 @@ aiusg = { version = "0.5", default-features = false }
 ```
 
 With no features you get Claude, Codex, Gemini and Grok usage, credential
-discovery from each provider's own CLI home, and token refresh. Add only what
+discovery from each provider's own CLI directory, and token refresh. Add only what
 you need:
 
 | Feature | Adds |
@@ -136,9 +136,12 @@ A provider left out of the build is still in `Provider::ALL`, and calling it
 returns an error naming the feature that adds it.
 
 The Claude and Codex fetchers have an `_at` variant that takes the API base, so
-you can point them at a proxy or a local mock; `BASE` is the real one:
+you can point them at a proxy or a local mock. The base is an origin, with or
+without a trailing slash; `BASE` is the real one. `claude::fetch_at` reads the
+plan from the account profile too, so it needs no separate `profile_at` call:
 
-```rust
+```rust,no_run
+use aiusg::model::{Account, Availability, Provider};
 use aiusg::provider::{claude, is_signed_out};
 use aiusg::store::Credential;
 
@@ -146,11 +149,18 @@ use aiusg::store::Credential;
 async fn main() -> anyhow::Result<()> {
     let http = reqwest::Client::new();
     let credential = Credential::bearer(std::env::var("CLAUDE_ACCESS_TOKEN")?);
+    let account = Account::new(Provider::Claude, "jake@example.com", None);
 
     match claude::fetch_at(&http, claude::BASE, &credential).await {
         Ok(fetched) => {
-            for window in &fetched.windows {
+            let usage = fetched.into_usage(&account);
+            for window in &usage.windows {
                 println!("{}: {:?}% used, resets {:?}", window.name, window.used_percent, window.resets_at);
+            }
+            match usage.availability() {
+                Availability::Now => println!("{:.0}% headroom", usage.headroom()),
+                Availability::At(time) => println!("spent until {time}"),
+                Availability::Unknown => println!("spent, with no reset reported"),
             }
         }
         Err(error) if is_signed_out(&error) => eprintln!("the token was refused; sign in again"),
@@ -161,9 +171,14 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 `claude::discover_in`, `codex::discover_in` and `grok::discover_in` read the
-credential a provider's CLI stored under a home directory you name, and
-`Fetched::into_usage` turns a fetch into the same `Usage` the CLI ranks, with
-`headroom()` and `usable_at()`. Set `AIUSG_DEBUG=1` in the calling process to
+credential a provider's CLI stored in that CLI's own directory, the one
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` names (such as `~/.codex`),
+not the user's home. A missing or blank credentials file gives no logins, and
+one that cannot be read or parsed is an error. `Fetched::into_usage` turns a
+fetch into the same `Usage` the CLI ranks, with `headroom()` and
+`availability()`; `into_usage_at` takes the fetch time instead of using now.
+`is_signed_out` tells a refused token (a 401 or 403 anywhere in the error
+chain) apart from any other failure. Set `AIUSG_DEBUG=1` in the calling process to
 print every raw provider response, with its HTTP status, to stderr.
 
 ## Providers

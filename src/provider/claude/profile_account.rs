@@ -3,6 +3,8 @@ use serde::Deserialize;
 const UUID_PREFIX: usize = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+/// The account half of a [`Profile`](super::Profile).
+#[non_exhaustive]
 pub struct ProfileAccount {
     #[serde(default)]
     pub uuid: Option<String>,
@@ -15,6 +17,8 @@ pub struct ProfileAccount {
 }
 
 impl ProfileAccount {
+    /// The first non-empty of the email, display name and full name, else the
+    /// first block of the uuid.
     pub fn label(&self) -> Option<&str> {
         [&self.email, &self.display_name, &self.full_name]
             .into_iter()

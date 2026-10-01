@@ -1,6 +1,8 @@
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+/// The organization half of a [`Profile`](super::Profile).
+#[non_exhaustive]
 pub struct ProfileOrganization {
     #[serde(default)]
     pub rate_limit_tier: Option<String>,
@@ -11,6 +13,8 @@ pub struct ProfileOrganization {
 }
 
 impl ProfileOrganization {
+    /// The first non-empty of the rate limit tier, organization type and
+    /// billing type.
     pub fn plan(&self) -> Option<&str> {
         [
             &self.rate_limit_tier,

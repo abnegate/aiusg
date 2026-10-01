@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(feature = "login")]
 use anyhow::bail;
@@ -10,9 +10,10 @@ use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, endpoint, load, read_json};
+use crate::provider::{Discovered, Fetched, endpoint, home, load, read_json};
 use crate::store::Credential;
 
+/// The origin of the ChatGPT backend that [`fetch`] reads from.
 pub const BASE: &str = "https://chatgpt.com";
 const USAGE_PATH: &str = "/backend-api/wham/usage";
 const AUTH_FILE: &str = "auth.json";
@@ -108,6 +109,13 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
     fetch_at(http, BASE, credential).await
 }
 
+/// Reads the usage windows and plan for `credential` from `base`.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// A refused token is an error that [`is_signed_out`] recognises.
+///
+/// [`is_signed_out`]: crate::provider::is_signed_out
 pub async fn fetch_at(
     http: &reqwest::Client,
     base: &str,
@@ -346,22 +354,21 @@ struct StoredTokens {
     account_id: Option<String>,
 }
 
-fn home() -> Option<PathBuf> {
-    match std::env::var_os(HOME_ENV) {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(HOME_DIRECTORY)),
-    }
-}
-
 pub fn discover() -> Result<Vec<Discovered>> {
-    match home() {
-        Some(home) => discover_in(&home),
+    match home(HOME_ENV, HOME_DIRECTORY) {
+        Some(directory) => discover_in(&directory),
         None => Ok(Vec::new()),
     }
 }
 
-pub fn discover_in(home: &Path) -> Result<Vec<Discovered>> {
-    let stored: Option<StoredAuth> = load(&home.join(AUTH_FILE))?;
+/// Reads the login that the Codex CLI stored in `directory`, its own home: the
+/// one `CODEX_HOME` names, `~/.codex` by default, not the user's home.
+///
+/// The Codex CLI stores one login per directory, so the list holds at most one.
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: Option<StoredAuth> = load(&directory.join(AUTH_FILE))?;
     let Some(tokens) = stored
         .and_then(|stored| stored.tokens)
         .filter(|tokens| !tokens.access_token.is_empty())

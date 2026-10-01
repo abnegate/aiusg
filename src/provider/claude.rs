@@ -2,7 +2,7 @@ mod profile;
 mod profile_account;
 mod profile_organization;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(feature = "login")]
 use anyhow::bail;
@@ -15,13 +15,14 @@ use sha2::{Digest, Sha256};
 use crate::model::{Account, Provider, Window};
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, endpoint, load, read_json};
+use crate::provider::{Discovered, Fetched, endpoint, home, load, read_json};
 use crate::store::Credential;
 
 pub use profile::Profile;
 pub use profile_account::ProfileAccount;
 pub use profile_organization::ProfileOrganization;
 
+/// The origin of the Claude API that [`fetch`] and [`profile`] read from.
 pub const BASE: &str = "https://api.anthropic.com";
 const USAGE_PATH: &str = "/api/oauth/usage";
 const PROFILE_PATH: &str = "/api/oauth/profile";
@@ -165,21 +166,29 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
     fetch_at(http, BASE, credential).await
 }
 
+/// Reads the usage windows for `credential` from `base`, along with the plan
+/// from the account profile.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// The plan is `None` when the profile cannot be read, so a profile failure
+/// never fails the fetch and a caller needs no separate [`profile_at`] for the
+/// plan. A refused token is an error that [`is_signed_out`] recognises.
+///
+/// [`is_signed_out`]: crate::provider::is_signed_out
 pub async fn fetch_at(
     http: &reqwest::Client,
     base: &str,
     credential: &Credential,
 ) -> Result<Fetched> {
-    let (usage, profile) = tokio::join!(
-        usage_at(http, base, &credential.access_token),
-        profile_at(http, base, &credential.access_token),
-    );
+    let (usage, profile) =
+        tokio::try_join!(usage_at(http, base, &credential.access_token), async {
+            anyhow::Ok(profile_at(http, base, &credential.access_token).await.ok())
+        },)?;
 
     Ok(Fetched {
-        plan: profile
-            .ok()
-            .and_then(|profile| profile.plan().map(str::to_owned)),
-        windows: windows(usage?),
+        plan: profile.and_then(|profile| profile.plan().map(str::to_owned)),
+        windows: windows(usage),
     })
 }
 
@@ -191,10 +200,17 @@ async fn usage_at(http: &reqwest::Client, base: &str, access_token: &str) -> Res
     read_json(response, "Claude usage").await
 }
 
+/// Reads the account profile for `access_token` from [`BASE`].
 pub async fn profile(http: &reqwest::Client, access_token: &str) -> Result<Profile> {
     profile_at(http, BASE, access_token).await
 }
 
+/// Reads the account profile for `access_token` from `base`.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// [`fetch_at`] already carries the profile's plan; this is for the account
+/// label, or for the profile on its own.
 pub async fn profile_at(http: &reqwest::Client, base: &str, access_token: &str) -> Result<Profile> {
     let response = request(http, access_token, &endpoint(base, PROFILE_PATH))
         .send()
@@ -348,14 +364,21 @@ pub fn discover() -> Result<Vec<Discovered>> {
     if let Some(stored) = keychain_credentials() {
         return Ok(stored.map(discovered).unwrap_or_default());
     }
-    match config_dir() {
+    match home(CONFIG_ENV, CONFIG_DIRECTORY) {
         Some(directory) => discover_in(&directory),
         None => Ok(Vec::new()),
     }
 }
 
-pub fn discover_in(config_dir: &Path) -> Result<Vec<Discovered>> {
-    let stored: Option<StoredCredentials> = load(&config_dir.join(CREDENTIALS_FILE))?;
+/// Reads the login that Claude Code stored in `directory`, its configuration
+/// directory: the one `CLAUDE_CONFIG_DIR` names, `~/.claude` by default, not
+/// the user's home.
+///
+/// Claude Code stores one login per directory, so the list holds at most one.
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: Option<StoredCredentials> = load(&directory.join(CREDENTIALS_FILE))?;
     Ok(stored.map(discovered).unwrap_or_default())
 }
 
@@ -423,13 +446,6 @@ fn keychain_credentials() -> Option<Option<StoredCredentials>> {
     None
 }
 
-fn config_dir() -> Option<PathBuf> {
-    match std::env::var_os(CONFIG_ENV) {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(CONFIG_DIRECTORY)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,15 +504,15 @@ mod tests {
         assert_eq!(windows[0].used_percent, Some(12.5));
     }
 
-    fn config_dir_with(credentials: &str) -> tempfile::TempDir {
+    fn directory_with(credentials: &str) -> tempfile::TempDir {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join(CREDENTIALS_FILE), credentials).unwrap();
         directory
     }
 
     #[test]
-    fn discover_in_reads_the_credentials_file_of_the_config_dir_it_is_given() {
-        let directory = config_dir_with(
+    fn discover_in_reads_the_credentials_file_of_the_directory_it_is_given() {
+        let directory = directory_with(
             r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-token","refreshToken":"sk-ant-ort01-refresh","expiresAt":1790000000000,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}"#,
         );
 
@@ -523,29 +539,29 @@ mod tests {
     }
 
     #[test]
-    fn discover_in_a_config_dir_without_credentials_finds_nothing() {
+    fn discover_in_a_directory_without_credentials_finds_nothing() {
         let directory = tempfile::tempdir().unwrap();
         assert!(discover_in(directory.path()).unwrap().is_empty());
         assert!(
             discover_in(&directory.path().join("never-created"))
                 .unwrap()
                 .is_empty(),
-            "a config dir that does not exist yet is not an error"
+            "a directory that does not exist yet is not an error"
         );
     }
 
     #[test]
     fn discover_in_skips_an_empty_token() {
-        let directory = config_dir_with(r#"{"claudeAiOauth":{"accessToken":""}}"#);
+        let directory = directory_with(r#"{"claudeAiOauth":{"accessToken":""}}"#);
         assert!(discover_in(directory.path()).unwrap().is_empty());
 
-        let signed_out = config_dir_with("{}");
+        let signed_out = directory_with("{}");
         assert!(discover_in(signed_out.path()).unwrap().is_empty());
     }
 
     #[test]
     fn discover_in_fails_on_unparsable_credentials() {
-        let directory = config_dir_with("{\"claudeAiOauth\":");
+        let directory = directory_with("{\"claudeAiOauth\":");
         let error = discover_in(directory.path()).unwrap_err();
         assert!(
             format!("{error:#}").contains(CREDENTIALS_FILE),

@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
-use crate::provider::{Discovered, Fetched, cursor};
+use crate::provider::{Discovered, Fetched, cursor, read_json};
 use crate::store::Credential;
 
 const USAGE_URL: &str = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus";
@@ -56,7 +56,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
 
     let response = request.send().await.context("requesting Grok Bot usage")?;
 
-    let status: UsageStatus = crate::provider::read_json(response, "Grok Bot usage").await?;
+    let status: UsageStatus = read_json(response, "Grok Bot usage").await?;
 
     Ok(Fetched {
         plan: plan(&status),

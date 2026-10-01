@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(feature = "login")]
 use anyhow::bail;
@@ -12,7 +12,7 @@ use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, load};
+use crate::provider::{Discovered, Fetched, home, load, read_json};
 use crate::store::Credential;
 
 const AUTH_FILE: &str = "auth.json";
@@ -108,7 +108,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Grok billing")?;
 
-    let envelope: BillingEnvelope = crate::provider::read_json(response, "Grok billing").await?;
+    let envelope: BillingEnvelope = read_json(response, "Grok billing").await?;
     let windows = windows(envelope.config);
 
     Ok(Fetched {
@@ -325,22 +325,21 @@ struct StoredAccount {
     expires_at: Option<DateTime<Utc>>,
 }
 
-fn home() -> Option<PathBuf> {
-    match std::env::var_os(HOME_ENV) {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(HOME_DIRECTORY)),
-    }
-}
-
 pub fn discover() -> Result<Vec<Discovered>> {
-    match home() {
-        Some(home) => discover_in(&home),
+    match home(HOME_ENV, HOME_DIRECTORY) {
+        Some(directory) => discover_in(&directory),
         None => Ok(Vec::new()),
     }
 }
 
-pub fn discover_in(home: &Path) -> Result<Vec<Discovered>> {
-    let stored: BTreeMap<String, StoredAccount> = load(&home.join(AUTH_FILE))?.unwrap_or_default();
+/// Reads every login that the Grok CLI stored in `directory`, its own home: the
+/// one `GROK_HOME` names, `~/.grok` by default, not the user's home.
+///
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: BTreeMap<String, StoredAccount> =
+        load(&directory.join(AUTH_FILE))?.unwrap_or_default();
 
     let mut found = Vec::new();
     for (issuer, account) in stored {

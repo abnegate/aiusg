@@ -3,6 +3,7 @@ mod mock;
 use std::path::Path;
 use std::time::Duration;
 
+use aiusg::model::Availability;
 use aiusg::provider::{claude, codex, is_signed_out};
 use aiusg::store::Credential;
 use chrono::{DateTime, TimeZone, Utc};
@@ -11,9 +12,12 @@ use mock::{Mock, Reply};
 const CLAUDE_USAGE: &str = "/api/oauth/usage";
 const CLAUDE_PROFILE: &str = "/api/oauth/profile";
 const CODEX_USAGE: &str = "/backend-api/wham/usage";
+const CODEX_AUTH_FILE: &str = "auth.json";
+const CLAUDE_CREDENTIALS_FILE: &str = ".credentials.json";
 const CLAUDE_TOKEN: &str = "sk-ant-oat01-zone";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const TIMEOUT: Duration = Duration::from_secs(5);
+const PROMPT: Duration = Duration::from_secs(1);
 
 const CLAUDE_USAGE_BODY: &str = r#"{"limits":[{"kind":"session","percent":62,"resets_at":"2026-09-23T06:10:00Z","scope":null},{"kind":"weekly_all","percent":31,"resets_at":"2026-09-28T04:00:00Z","scope":null}],"extra_usage":{"is_enabled":false}}"#;
 const CLAUDE_EXHAUSTED_BODY: &str = r#"{"limits":[{"kind":"session","percent":40,"resets_at":"2026-10-01T05:00:00Z"},{"kind":"weekly_all","percent":100,"resets_at":"2026-10-08T04:00:00Z"}]}"#;
@@ -106,7 +110,7 @@ async fn a_zone_shaped_caller_reads_usage_and_profile_from_a_base_it_names() {
     assert_eq!(profile.label(), Some("jake@example.com"));
     assert_eq!(profile.plan(), Some("default_claude_max_20x"));
 
-    let home = home_with("auth.json", CODEX_AUTH);
+    let home = home_with(CODEX_AUTH_FILE, CODEX_AUTH);
     let login = codex::discover_in(home.path())
         .expect("reading the login's codex home")
         .remove(0);
@@ -182,12 +186,32 @@ async fn a_refused_usage_token_is_signed_out() {
 }
 
 #[tokio::test]
+async fn a_refused_usage_token_does_not_wait_for_the_profile() {
+    let mock = Mock::serve([
+        (CLAUDE_USAGE, Reply::status(401)),
+        (CLAUDE_PROFILE, Reply::stall()),
+    ])
+    .await;
+    let http = http();
+
+    let refused = tokio::time::timeout(
+        PROMPT,
+        claude::fetch_at(&http, mock.base(), &Credential::bearer(CLAUDE_TOKEN)),
+    )
+    .await
+    .expect("a refused usage request returns well within the client timeout")
+    .expect_err("a 401 from the usage endpoint fails the fetch");
+
+    assert!(is_signed_out(&refused), "{refused:#}");
+}
+
+#[tokio::test]
 async fn a_discovered_home_becomes_usage_with_its_reset() {
     let mock = Mock::serve([(CLAUDE_USAGE, Reply::json(CLAUDE_EXHAUSTED_BODY))]).await;
-    let home = home_with(".credentials.json", CLAUDE_CREDENTIALS);
+    let home = home_with(CLAUDE_CREDENTIALS_FILE, CLAUDE_CREDENTIALS);
 
     let login = claude::discover_in(home.path())
-        .expect("reading the login's config dir")
+        .expect("reading the login's configuration directory")
         .remove(0);
     let fetched = claude::fetch_at(&http(), mock.base(), &login.credential)
         .await
@@ -203,8 +227,13 @@ async fn a_discovered_home_becomes_usage_with_its_reset() {
         "the profile is unavailable on this base, so no plan came back"
     );
 
-    let usage = fetched.into_usage(&login.account);
+    let fetched_at = at("2026-10-01T04:30:00Z");
+    let usage = fetched.into_usage_at(&login.account, fetched_at);
 
+    assert_eq!(
+        usage.fetched_at, fetched_at,
+        "the caller's timestamp is kept"
+    );
     assert_eq!(usage.account, login.account.id);
     assert_eq!(usage.provider, login.account.provider);
     assert_eq!(usage.label, login.account.label);
@@ -215,8 +244,8 @@ async fn a_discovered_home_becomes_usage_with_its_reset() {
     );
     assert_eq!(usage.headroom(), 0.0);
     assert_eq!(
-        usage.usable_at(),
-        Some(at("2026-10-08T04:00:00Z")),
+        usage.availability(),
+        Availability::At(at("2026-10-08T04:00:00Z")),
         "the login is usable again when its spent weekly window resets"
     );
 }
