@@ -116,14 +116,21 @@ impl Store {
         Self::open_with(
             std::env::var_os(HOME_ENV),
             std::env::var(KEYCHAIN_ENV).ok().as_deref(),
+            legacy_directory(),
         )
     }
 
-    fn open_with(home: Option<OsString>, keychain: Option<&str>) -> Result<Self> {
+    fn open_with(
+        home: Option<OsString>,
+        keychain: Option<&str>,
+        legacy: Option<PathBuf>,
+    ) -> Result<Self> {
         let backend = Backend::from_setting(keychain)?;
+        let home = home.filter(|path| !path.is_empty());
+        let legacy = legacy.filter(|path| home.is_none() && path.exists());
         let directory = directory(home)?;
         if !directory.exists()
-            && let Some(previous) = legacy_directory().filter(|path| path.exists())
+            && let Some(previous) = legacy
         {
             if let Some(parent) = directory.parent() {
                 fs::create_dir_all(parent)
@@ -406,11 +413,33 @@ mod tests {
     #[test]
     fn a_store_opens_in_the_directory_it_is_given() {
         let home = tempfile::tempdir().unwrap();
-        let store = Store::open_with(Some(home.path().into()), None).unwrap();
+        let store = Store::open_with(Some(home.path().into()), None, None).unwrap();
 
         assert_eq!(store.directory, home.path());
         assert_eq!(store.backend, Backend::File);
         assert!(store.accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_explicit_aiusg_home_leaves_the_legacy_store_in_place() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = root.path().join("legacy");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join(ACCOUNTS_FILE), "{}").unwrap();
+        let home = root.path().join("home");
+
+        let store =
+            Store::open_with(Some(home.clone().into()), None, Some(legacy.clone())).unwrap();
+
+        assert_eq!(store.directory, home);
+        assert!(
+            legacy.join(ACCOUNTS_FILE).exists(),
+            "an explicit AIUSG_HOME must not move the existing store"
+        );
+        assert!(
+            !home.join(ACCOUNTS_FILE).exists(),
+            "the new home starts empty"
+        );
     }
 
     #[cfg(not(feature = "keychain"))]
@@ -419,7 +448,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let directory = home.path().join("aiusg");
 
-        Store::open_with(Some(directory.clone().into()), Some("1"))
+        Store::open_with(Some(directory.clone().into()), Some("1"), None)
             .expect_err("plaintext storage must not stand in for the keychain");
 
         assert!(
