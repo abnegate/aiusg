@@ -15,7 +15,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -93,13 +93,17 @@ pub struct Fetched {
 
 impl Fetched {
     pub fn into_usage(self, account: &Account) -> Usage {
+        self.into_usage_at(account, Utc::now())
+    }
+
+    pub fn into_usage_at(self, account: &Account, fetched_at: DateTime<Utc>) -> Usage {
         Usage {
             account: account.id.clone(),
             provider: account.provider,
             label: account.label.clone(),
             plan: self.plan.or_else(|| account.plan.clone()),
             windows: self.windows,
-            fetched_at: Utc::now(),
+            fetched_at,
         }
     }
 }
@@ -243,6 +247,24 @@ mod tests {
             renamed.plan.as_deref(),
             Some("plus"),
             "a plan the fetch reports replaces the stored one"
+        );
+    }
+
+    #[test]
+    fn a_fetch_is_stamped_now_unless_the_caller_names_the_time() {
+        let account = Account::new(Provider::Claude, "jake@example.com", None);
+        let named = DateTime::parse_from_rfc3339("2026-10-01T04:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let stamped = Fetched::default().into_usage_at(&account, named);
+        assert_eq!(stamped.fetched_at, named);
+
+        let before = Utc::now();
+        let current = Fetched::default().into_usage(&account);
+        assert!(
+            (before..=Utc::now()).contains(&current.fetched_at),
+            "into_usage stamps the time of the call"
         );
     }
 

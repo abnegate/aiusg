@@ -225,8 +225,13 @@ async fn a_discovered_home_becomes_usage_with_its_reset() {
         "the profile is unavailable on this base, so no plan came back"
     );
 
-    let usage = fetched.into_usage(&login.account);
+    let fetched_at = at("2026-10-01T04:30:00Z");
+    let usage = fetched.into_usage_at(&login.account, fetched_at);
 
+    assert_eq!(
+        usage.fetched_at, fetched_at,
+        "the caller's timestamp is kept"
+    );
     assert_eq!(usage.account, login.account.id);
     assert_eq!(usage.provider, login.account.provider);
     assert_eq!(usage.label, login.account.label);
