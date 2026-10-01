@@ -1,9 +1,13 @@
+mod availability;
+
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+pub use availability::Availability;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -203,13 +207,17 @@ impl Usage {
             .map_or(100.0, |used| 100.0 - used)
     }
 
-    pub fn usable_at(&self) -> Option<DateTime<Utc>> {
-        let mut latest: Option<DateTime<Utc>> = None;
-        for window in self.windows.iter().filter(|window| window.is_exhausted()) {
-            let resets_at = window.resets_at?;
-            latest = Some(latest.map_or(resets_at, |current| current.max(resets_at)));
-        }
-        latest
+    pub fn availability(&self) -> Availability {
+        self.windows
+            .iter()
+            .filter(|window| window.is_exhausted())
+            .map(|window| {
+                window
+                    .resets_at
+                    .map_or(Availability::Unknown, Availability::At)
+            })
+            .max()
+            .unwrap_or(Availability::Now)
     }
 }
 
@@ -258,7 +266,7 @@ impl Report {
                     Usability::Available { headroom }
                 } else {
                     Usability::Exhausted {
-                        usable_at: usage.usable_at(),
+                        availability: usage.availability(),
                     }
                 }
             }
@@ -271,7 +279,7 @@ impl Report {
 #[derive(Clone, Copy, Debug)]
 pub enum Usability {
     Available { headroom: f64 },
-    Exhausted { usable_at: Option<DateTime<Utc>> },
+    Exhausted { availability: Availability },
     Failing,
     SignedOut,
 }
@@ -294,14 +302,11 @@ impl Ord for Usability {
                 right.total_cmp(left)
             }
             (
-                Usability::Exhausted { usable_at: left },
-                Usability::Exhausted { usable_at: right },
-            ) => match (left, right) {
-                (Some(left), Some(right)) => left.cmp(right),
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (None, None) => Ordering::Equal,
-            },
+                Usability::Exhausted { availability: left },
+                Usability::Exhausted {
+                    availability: right,
+                },
+            ) => left.cmp(right),
             _ => self.tier().cmp(&other.tier()),
         }
     }
@@ -443,6 +448,77 @@ mod tests {
         ]);
 
         assert_eq!(order, ["one window", "two windows"]);
+    }
+
+    fn usage_of(windows: Vec<Window>) -> Usage {
+        let Report::Ok(usage) = usage("account", windows) else {
+            unreachable!("usage builds an ok report");
+        };
+        usage
+    }
+
+    #[test]
+    fn an_account_with_nothing_spent_is_available_now() {
+        let usage = usage_of(vec![
+            Window::from_percent("5h", 99.0),
+            Window::from_percent("7d", 40.0).resetting_at(Some(Utc::now())),
+        ]);
+        assert_eq!(usage.availability(), Availability::Now);
+        assert_eq!(usage_of(Vec::new()).availability(), Availability::Now);
+    }
+
+    #[test]
+    fn an_exhausted_window_without_a_reset_is_not_usable_now() {
+        let usage = usage_of(vec![spent("7d", None)]);
+        assert_eq!(
+            usage.availability(),
+            Availability::Unknown,
+            "a spent window with no reset time must not read as usable now"
+        );
+
+        let partly_known = usage_of(vec![
+            spent("5h", Some(Duration::hours(1))),
+            spent("7d", None),
+        ]);
+        assert_eq!(
+            partly_known.availability(),
+            Availability::Unknown,
+            "one known reset does not make the account usable while another is unknown"
+        );
+    }
+
+    #[test]
+    fn an_exhausted_account_is_available_when_its_last_spent_window_resets() {
+        let soon = Utc::now() + Duration::hours(1);
+        let later = Utc::now() + Duration::days(3);
+        let usage = usage_of(vec![
+            Window::from_percent("5h", 100.0).resetting_at(Some(soon)),
+            Window::from_percent("7d", 100.0).resetting_at(Some(later)),
+            Window::from_percent("Opus", 20.0).resetting_at(Some(later + Duration::days(1))),
+        ]);
+        assert_eq!(usage.availability(), Availability::At(later));
+    }
+
+    #[test]
+    fn availability_orders_now_then_by_time_then_unknown() {
+        let soon = Utc::now();
+        let later = soon + Duration::hours(1);
+        let mut order = vec![
+            Availability::Unknown,
+            Availability::At(later),
+            Availability::Now,
+            Availability::At(soon),
+        ];
+        order.sort();
+        assert_eq!(
+            order,
+            [
+                Availability::Now,
+                Availability::At(soon),
+                Availability::At(later),
+                Availability::Unknown,
+            ]
+        );
     }
 
     #[test]

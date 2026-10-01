@@ -3,6 +3,7 @@ mod mock;
 use std::path::Path;
 use std::time::Duration;
 
+use aiusg::model::Availability;
 use aiusg::provider::{claude, codex, is_signed_out};
 use aiusg::store::Credential;
 use chrono::{DateTime, TimeZone, Utc};
@@ -215,8 +216,8 @@ async fn a_discovered_home_becomes_usage_with_its_reset() {
     );
     assert_eq!(usage.headroom(), 0.0);
     assert_eq!(
-        usage.usable_at(),
-        Some(at("2026-10-08T04:00:00Z")),
+        usage.availability(),
+        Availability::At(at("2026-10-08T04:00:00Z")),
         "the login is usable again when its spent weekly window resets"
     );
 }

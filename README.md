@@ -163,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
 `claude::discover_in`, `codex::discover_in` and `grok::discover_in` read the
 credential a provider's CLI stored under a home directory you name, and
 `Fetched::into_usage` turns a fetch into the same `Usage` the CLI ranks, with
-`headroom()` and `usable_at()`. Set `AIUSG_DEBUG=1` in the calling process to
+`headroom()` and `availability()`. Set `AIUSG_DEBUG=1` in the calling process to
 print every raw provider response, with its HTTP status, to stderr.
 
 ## Providers

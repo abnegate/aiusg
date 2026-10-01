@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::app;
-use crate::model::{Provider, Report, Usage};
+use crate::model::{Availability, Provider, Report, Usage};
 use crate::store::Store;
 
 pub async fn serve() -> Result<()> {
@@ -156,7 +156,10 @@ fn routing(reports: &[Report]) -> Routing {
                         provider: candidate.provider,
                         label: candidate.label,
                         reason: "exhausted".to_owned(),
-                        resets_at: usage.usable_at(),
+                        resets_at: match usage.availability() {
+                            Availability::At(at) => Some(at),
+                            Availability::Now | Availability::Unknown => None,
+                        },
                     });
                 }
             }
