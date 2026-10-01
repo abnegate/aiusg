@@ -12,7 +12,7 @@ use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, home, load};
+use crate::provider::{Discovered, Fetched, home, load, read_json};
 use crate::store::Credential;
 
 const AUTH_FILE: &str = "auth.json";
@@ -108,7 +108,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Grok billing")?;
 
-    let envelope: BillingEnvelope = crate::provider::read_json(response, "Grok billing").await?;
+    let envelope: BillingEnvelope = read_json(response, "Grok billing").await?;
     let windows = windows(envelope.config);
 
     Ok(Fetched {

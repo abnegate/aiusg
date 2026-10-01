@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::model::{Account, Provider, Window};
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, home};
+use crate::provider::{Discovered, Fetched, home, read_json};
 use crate::store::Credential;
 
 const CODE_ASSIST: &str = "https://cloudcode-pa.googleapis.com/v1internal";
@@ -108,7 +108,7 @@ async fn load(http: &reqwest::Client, credential: &Credential) -> Result<LoadRes
         .await
         .context("requesting the Gemini Code Assist profile")?;
 
-    crate::provider::read_json(response, "Gemini profile").await
+    read_json(response, "Gemini profile").await
 }
 
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
@@ -143,7 +143,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Gemini quota")?;
 
-    let quota: QuotaResponse = crate::provider::read_json(response, "Gemini quota").await?;
+    let quota: QuotaResponse = read_json(response, "Gemini quota").await?;
     Ok(Fetched {
         plan,
         windows: quota

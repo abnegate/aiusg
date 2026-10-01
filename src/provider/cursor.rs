@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, read_json};
 use crate::store::Credential;
 
 const USAGE_URL: &str = "https://cursor.com/api/usage-summary";
@@ -133,7 +133,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Cursor usage")?;
 
-    let summary: UsageSummary = crate::provider::read_json(response, "Cursor usage").await?;
+    let summary: UsageSummary = read_json(response, "Cursor usage").await?;
     Ok(Fetched {
         plan: summary.membership_type.clone(),
         windows: windows(&summary),
