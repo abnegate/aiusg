@@ -39,3 +39,49 @@ jobs:
 
       - name: Build
         run: cargo build --release
+
+  library:
+    name: library (${{ matrix.features || 'no features' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ['', login, copilot, cursor]
+    env:
+      FEATURES: ${{ matrix.features }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: library-${{ matrix.features }}
+
+      - name: Build
+        run: cargo build --locked --no-default-features --features "$FEATURES"
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --no-default-features --features "$FEATURES" -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --no-default-features --features "$FEATURES"
+
+      - name: No CLI dependencies without default features
+        if: matrix.features == ''
+        run: |
+          tree="$(cargo tree --locked --no-default-features --target all -e normal)"
+          if grep -E 'crossterm|webbrowser|rusqlite|keyring|clap|rmcp|schemars' <<<"$tree"; then
+            echo "::error::the library build pulls in a CLI-only dependency"
+            exit 1
+          fi
+
+      - name: Install Secret Service
+        if: matrix.features == ''
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Package
+        if: matrix.features == ''
+        run: cargo publish --locked --dry-run

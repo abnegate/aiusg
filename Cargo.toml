@@ -1,14 +1,15 @@
 [package]
 name = "aiusg"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "One place to see usage limits and reset times across all your AI provider accounts"
 license = "MIT"
 repository = "https://github.com/abnegate/aiusg"
 readme = "README.md"
 keywords = ["claude", "codex", "copilot", "usage", "cli"]
-categories = ["command-line-utilities", "development-tools"]
+categories = ["command-line-utilities", "development-tools", "api-bindings"]
 rust-version = "1.88"
+include = ["src/**/*", "tests/**/*", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [[bin]]
 name = "aiusg"
