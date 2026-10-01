@@ -2,6 +2,7 @@
 //! keychain.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -19,6 +20,7 @@ const KEYRING_SERVICE: &str = "aiusg";
 const ACCOUNTS_FILE: &str = "accounts.json";
 const CREDENTIALS_FILE: &str = "credentials.json";
 const KEYCHAIN_ENV: &str = "AIUSG_KEYCHAIN";
+const HOME_ENV: &str = "AIUSG_HOME";
 
 /// What a provider needs to read an account's usage.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -70,10 +72,6 @@ enum Backend {
 }
 
 impl Backend {
-    fn from_env() -> Result<Self> {
-        Self::from_setting(std::env::var(KEYCHAIN_ENV).ok().as_deref())
-    }
-
     fn from_setting(setting: Option<&str>) -> Result<Self> {
         match setting {
             Some("1" | "true") => Self::keychain(),
@@ -115,10 +113,15 @@ pub struct Store {
 impl Store {
     /// Opens the store, creating its directory when it does not exist.
     pub fn open() -> Result<Self> {
-        let directory = match std::env::var_os("AIUSG_HOME") {
-            Some(path) => PathBuf::from(path),
-            None => default_directory()?,
-        };
+        Self::open_with(
+            std::env::var_os(HOME_ENV),
+            std::env::var(KEYCHAIN_ENV).ok().as_deref(),
+        )
+    }
+
+    fn open_with(home: Option<OsString>, keychain: Option<&str>) -> Result<Self> {
+        let backend = Backend::from_setting(keychain)?;
+        let directory = directory(home)?;
         if !directory.exists()
             && let Some(previous) = legacy_directory().filter(|path| path.exists())
         {
@@ -136,7 +139,7 @@ impl Store {
 
         Ok(Self {
             directory,
-            backend: Backend::from_env()?,
+            backend,
             guard: Arc::new(Mutex::new(())),
         })
     }
@@ -282,6 +285,13 @@ impl Store {
     }
 }
 
+fn directory(home: Option<OsString>) -> Result<PathBuf> {
+    match home.filter(|path| !path.is_empty()) {
+        Some(path) => Ok(PathBuf::from(path)),
+        None => default_directory(),
+    }
+}
+
 #[cfg(unix)]
 fn default_directory() -> Result<PathBuf> {
     let base = match std::env::var_os("XDG_CONFIG_HOME") {
@@ -373,6 +383,49 @@ mod tests {
                 Backend::Keychain
             );
         }
+    }
+
+    #[test]
+    fn aiusg_home_names_the_store_directory() {
+        assert_eq!(
+            directory(Some(OsString::from("/srv/aiusg"))).unwrap(),
+            PathBuf::from("/srv/aiusg")
+        );
+    }
+
+    #[test]
+    fn an_empty_aiusg_home_counts_as_unset() {
+        assert_eq!(
+            directory(Some(OsString::new())).unwrap(),
+            default_directory().unwrap(),
+            "an empty value must not resolve to the working directory"
+        );
+        assert_eq!(directory(None).unwrap(), default_directory().unwrap());
+    }
+
+    #[test]
+    fn a_store_opens_in_the_directory_it_is_given() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::open_with(Some(home.path().into()), None).unwrap();
+
+        assert_eq!(store.directory, home.path());
+        assert_eq!(store.backend, Backend::File);
+        assert!(store.accounts().unwrap().is_empty());
+    }
+
+    #[cfg(not(feature = "keychain"))]
+    #[test]
+    fn a_refused_keychain_leaves_the_filesystem_untouched() {
+        let home = tempfile::tempdir().unwrap();
+        let directory = home.path().join("aiusg");
+
+        Store::open_with(Some(directory.clone().into()), Some("1"))
+            .expect_err("plaintext storage must not stand in for the keychain");
+
+        assert!(
+            !directory.exists(),
+            "the store directory must not be created before the backend is decided"
+        );
     }
 
     #[cfg(not(feature = "keychain"))]
