@@ -12,6 +12,8 @@ use mock::{Mock, Reply};
 const CLAUDE_USAGE: &str = "/api/oauth/usage";
 const CLAUDE_PROFILE: &str = "/api/oauth/profile";
 const CODEX_USAGE: &str = "/backend-api/wham/usage";
+const CODEX_AUTH_FILE: &str = "auth.json";
+const CLAUDE_CREDENTIALS_FILE: &str = ".credentials.json";
 const CLAUDE_TOKEN: &str = "sk-ant-oat01-zone";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -108,7 +110,7 @@ async fn a_zone_shaped_caller_reads_usage_and_profile_from_a_base_it_names() {
     assert_eq!(profile.label(), Some("jake@example.com"));
     assert_eq!(profile.plan(), Some("default_claude_max_20x"));
 
-    let home = home_with("auth.json", CODEX_AUTH);
+    let home = home_with(CODEX_AUTH_FILE, CODEX_AUTH);
     let login = codex::discover_in(home.path())
         .expect("reading the login's codex home")
         .remove(0);
@@ -206,7 +208,7 @@ async fn a_refused_usage_token_does_not_wait_for_the_profile() {
 #[tokio::test]
 async fn a_discovered_home_becomes_usage_with_its_reset() {
     let mock = Mock::serve([(CLAUDE_USAGE, Reply::json(CLAUDE_EXHAUSTED_BODY))]).await;
-    let home = home_with(".credentials.json", CLAUDE_CREDENTIALS);
+    let home = home_with(CLAUDE_CREDENTIALS_FILE, CLAUDE_CREDENTIALS);
 
     let login = claude::discover_in(home.path())
         .expect("reading the login's configuration directory")
