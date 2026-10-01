@@ -11,6 +11,10 @@ categories = ["command-line-utilities", "development-tools", "api-bindings"]
 rust-version = "1.88"
 include = ["src/**/*", "tests/**/*", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [[bin]]
 name = "aiusg"
 path = "src/main.rs"
