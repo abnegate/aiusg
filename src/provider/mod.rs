@@ -10,8 +10,9 @@ pub mod grok;
 pub mod grokbot;
 mod unsupported;
 
+use std::ffi::OsString;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
@@ -52,6 +53,14 @@ pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &
 
 fn endpoint(base: &str, path: &str) -> String {
     format!("{}{path}", base.trim_end_matches('/'))
+}
+
+fn home(variable: &str, default: &str) -> Option<PathBuf> {
+    named(std::env::var_os(variable)).or_else(|| Some(dirs::home_dir()?.join(default)))
+}
+
+fn named(value: Option<OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
 
 fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
@@ -243,6 +252,32 @@ mod tests {
         assert_eq!(
             endpoint("http://127.0.0.1:8080/", "/api/oauth/usage"),
             "http://127.0.0.1:8080/api/oauth/usage"
+        );
+    }
+
+    #[test]
+    fn a_home_variable_names_the_directory_when_it_is_set() {
+        assert_eq!(
+            named(Some(OsString::from("/srv/codex"))),
+            Some(PathBuf::from("/srv/codex"))
+        );
+    }
+
+    #[test]
+    fn an_empty_home_variable_counts_as_unset() {
+        assert_eq!(
+            named(Some(OsString::new())),
+            None,
+            "an empty value must not resolve to the working directory"
+        );
+        assert_eq!(named(None), None);
+    }
+
+    #[test]
+    fn an_unset_home_variable_falls_back_under_the_user_home() {
+        assert_eq!(
+            home("AIUSG_TEST_VARIABLE_THAT_IS_NEVER_SET", ".codex"),
+            dirs::home_dir().map(|directory| directory.join(".codex"))
         );
     }
 

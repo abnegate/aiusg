@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(feature = "login")]
 use anyhow::bail;
@@ -10,7 +10,7 @@ use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, endpoint, load, read_json};
+use crate::provider::{Discovered, Fetched, endpoint, home, load, read_json};
 use crate::store::Credential;
 
 pub const BASE: &str = "https://chatgpt.com";
@@ -346,15 +346,8 @@ struct StoredTokens {
     account_id: Option<String>,
 }
 
-fn home() -> Option<PathBuf> {
-    match std::env::var_os(HOME_ENV) {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(HOME_DIRECTORY)),
-    }
-}
-
 pub fn discover() -> Result<Vec<Discovered>> {
-    match home() {
+    match home(HOME_ENV, HOME_DIRECTORY) {
         Some(home) => discover_in(&home),
         None => Ok(Vec::new()),
     }

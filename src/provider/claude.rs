@@ -2,7 +2,7 @@ mod profile;
 mod profile_account;
 mod profile_organization;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[cfg(feature = "login")]
 use anyhow::bail;
@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::model::{Account, Provider, Window};
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched, endpoint, load, read_json};
+use crate::provider::{Discovered, Fetched, endpoint, home, load, read_json};
 use crate::store::Credential;
 
 pub use profile::Profile;
@@ -346,14 +346,14 @@ pub fn discover() -> Result<Vec<Discovered>> {
     if let Some(stored) = keychain_credentials() {
         return Ok(stored.map(discovered).unwrap_or_default());
     }
-    match config_dir() {
+    match home(CONFIG_ENV, CONFIG_DIRECTORY) {
         Some(directory) => discover_in(&directory),
         None => Ok(Vec::new()),
     }
 }
 
-pub fn discover_in(config_dir: &Path) -> Result<Vec<Discovered>> {
-    let stored: Option<StoredCredentials> = load(&config_dir.join(CREDENTIALS_FILE))?;
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: Option<StoredCredentials> = load(&directory.join(CREDENTIALS_FILE))?;
     Ok(stored.map(discovered).unwrap_or_default())
 }
 
@@ -421,13 +421,6 @@ fn keychain_credentials() -> Option<Option<StoredCredentials>> {
     None
 }
 
-fn config_dir() -> Option<PathBuf> {
-    match std::env::var_os(CONFIG_ENV) {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(CONFIG_DIRECTORY)),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,15 +479,15 @@ mod tests {
         assert_eq!(windows[0].used_percent, Some(12.5));
     }
 
-    fn config_dir_with(credentials: &str) -> tempfile::TempDir {
+    fn directory_with(credentials: &str) -> tempfile::TempDir {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join(CREDENTIALS_FILE), credentials).unwrap();
         directory
     }
 
     #[test]
-    fn discover_in_reads_the_credentials_file_of_the_config_dir_it_is_given() {
-        let directory = config_dir_with(
+    fn discover_in_reads_the_credentials_file_of_the_directory_it_is_given() {
+        let directory = directory_with(
             r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-token","refreshToken":"sk-ant-ort01-refresh","expiresAt":1790000000000,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}"#,
         );
 
@@ -521,29 +514,29 @@ mod tests {
     }
 
     #[test]
-    fn discover_in_a_config_dir_without_credentials_finds_nothing() {
+    fn discover_in_a_directory_without_credentials_finds_nothing() {
         let directory = tempfile::tempdir().unwrap();
         assert!(discover_in(directory.path()).unwrap().is_empty());
         assert!(
             discover_in(&directory.path().join("never-created"))
                 .unwrap()
                 .is_empty(),
-            "a config dir that does not exist yet is not an error"
+            "a directory that does not exist yet is not an error"
         );
     }
 
     #[test]
     fn discover_in_skips_an_empty_token() {
-        let directory = config_dir_with(r#"{"claudeAiOauth":{"accessToken":""}}"#);
+        let directory = directory_with(r#"{"claudeAiOauth":{"accessToken":""}}"#);
         assert!(discover_in(directory.path()).unwrap().is_empty());
 
-        let signed_out = config_dir_with("{}");
+        let signed_out = directory_with("{}");
         assert!(discover_in(signed_out.path()).unwrap().is_empty());
     }
 
     #[test]
     fn discover_in_fails_on_unparsable_credentials() {
-        let directory = config_dir_with("{\"claudeAiOauth\":");
+        let directory = directory_with("{\"claudeAiOauth\":");
         let error = discover_in(directory.path()).unwrap_err();
         assert!(
             format!("{error:#}").contains(CREDENTIALS_FILE),

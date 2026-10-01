@@ -209,7 +209,7 @@ async fn a_discovered_home_becomes_usage_with_its_reset() {
     let home = home_with(".credentials.json", CLAUDE_CREDENTIALS);
 
     let login = claude::discover_in(home.path())
-        .expect("reading the login's config dir")
+        .expect("reading the login's configuration directory")
         .remove(0);
     let fetched = claude::fetch_at(&http(), mock.base(), &login.credential)
         .await

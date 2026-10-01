@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
@@ -8,13 +6,17 @@ use serde_json::json;
 use crate::model::{Account, Provider, Window};
 #[cfg(feature = "login")]
 use crate::oauth::{Loopback, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, home};
 use crate::store::Credential;
 
 const CODE_ASSIST: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 #[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const HOME_DIRECTORY: &str = ".gemini";
+const HOME_ENV: &str = "GEMINI_CLI_HOME";
+const CREDENTIALS_FILE: &str = "oauth_creds.json";
+const ACCOUNTS_FILE: &str = "google_accounts.json";
 const CLIENT_ID_ENV: &str = "AIUSG_GEMINI_CLIENT_ID";
 const CLIENT_SECRET_ENV: &str = "AIUSG_GEMINI_CLIENT_SECRET";
 #[cfg(feature = "login")]
@@ -318,18 +320,11 @@ fn client() -> Result<Client> {
     Ok(Client { id, secret })
 }
 
-fn home() -> Option<PathBuf> {
-    match std::env::var_os("GEMINI_CLI_HOME") {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(".gemini")),
-    }
-}
-
 pub fn discover() -> Result<Vec<Discovered>> {
-    let Some(home) = home() else {
+    let Some(home) = home(HOME_ENV, HOME_DIRECTORY) else {
         return Ok(Vec::new());
     };
-    let path = home.join("oauth_creds.json");
+    let path = home.join(CREDENTIALS_FILE);
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -342,7 +337,7 @@ pub fn discover() -> Result<Vec<Discovered>> {
         return Ok(Vec::new());
     }
 
-    let label = std::fs::read_to_string(home.join("google_accounts.json"))
+    let label = std::fs::read_to_string(home.join(ACCOUNTS_FILE))
         .ok()
         .and_then(|raw| serde_json::from_str::<StoredAccounts>(&raw).ok())
         .and_then(|accounts| accounts.active)
