@@ -35,7 +35,10 @@ pub fn is_signed_out(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<SignedOut>())
 }
 
-pub async fn read_json<T: DeserializeOwned>(response: reqwest::Response, what: &str) -> Result<T> {
+pub(crate) async fn read_json<T: DeserializeOwned>(
+    response: reqwest::Response,
+    what: &str,
+) -> Result<T> {
     let status = response.status();
     let body = response
         .text()
@@ -80,7 +83,7 @@ fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
         .with_context(|| format!("parsing {}", path.display()))
 }
 
-pub fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+pub(crate) fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Default + Deserialize<'de>,

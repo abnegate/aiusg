@@ -1,6 +1,4 @@
-#[cfg(feature = "cli")]
 pub mod table;
-#[cfg(feature = "cli")]
 pub mod watch;
 
 use chrono::{DateTime, Utc};
