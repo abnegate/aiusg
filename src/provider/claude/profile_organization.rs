@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
 pub struct ProfileOrganization {
     #[serde(default)]
     pub rate_limit_tier: Option<String>,

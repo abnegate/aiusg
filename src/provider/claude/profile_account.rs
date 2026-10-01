@@ -3,6 +3,7 @@ use serde::Deserialize;
 const UUID_PREFIX: usize = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
 pub struct ProfileAccount {
     #[serde(default)]
     pub uuid: Option<String>,

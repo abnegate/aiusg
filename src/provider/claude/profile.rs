@@ -3,6 +3,7 @@ use serde::Deserialize;
 use super::{ProfileAccount, ProfileOrganization};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
 pub struct Profile {
     #[serde(default)]
     pub account: Option<ProfileAccount>,
