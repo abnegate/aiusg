@@ -95,6 +95,7 @@ where
 
 /// What one fetch read from a provider, before it is tied to an account.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Fetched {
     /// The plan the provider reported, if any.
     pub plan: Option<String>,
@@ -103,6 +104,11 @@ pub struct Fetched {
 }
 
 impl Fetched {
+    /// A fetch that read `plan` and `windows`.
+    pub fn new(plan: Option<String>, windows: Vec<Window>) -> Self {
+        Self { plan, windows }
+    }
+
     /// The [`Usage`] of `account`, fetched now.
     pub fn into_usage(self, account: &Account) -> Usage {
         self.into_usage_at(account, Utc::now())
@@ -126,11 +132,22 @@ impl Fetched {
 
 /// A login found on this machine or made by signing in.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Discovered {
     /// The account the login belongs to.
     pub account: Account,
     /// The login's credential.
     pub credential: Credential,
+}
+
+impl Discovered {
+    /// The login of `account` with `credential`.
+    pub fn new(account: Account, credential: Credential) -> Self {
+        Self {
+            account,
+            credential,
+        }
+    }
 }
 
 /// Reads the usage of `credential` from `provider`.

@@ -3,8 +3,8 @@ mod mock;
 use std::path::Path;
 use std::time::Duration;
 
-use aiusg::model::Availability;
-use aiusg::provider::{claude, codex, is_signed_out};
+use aiusg::model::{Account, Availability, Provider, Window};
+use aiusg::provider::{Discovered, Fetched, claude, codex, is_signed_out};
 use aiusg::store::Credential;
 use chrono::{DateTime, TimeZone, Utc};
 use mock::{Mock, Reply};
@@ -248,4 +248,24 @@ async fn a_discovered_home_becomes_usage_with_its_reset() {
         Availability::At(at("2026-10-08T04:00:00Z")),
         "the login is usable again when its spent weekly window resets"
     );
+}
+
+#[test]
+fn a_caller_builds_what_a_fetch_and_a_discovery_return() {
+    let account = Account::new(Provider::Codex, "jake@example.com", None);
+    let login = Discovered::new(account, Credential::bearer("codex-zone"));
+    assert_eq!(login.credential.access_token, "codex-zone");
+
+    let fetched_at = at("2026-10-01T04:30:00Z");
+    let usage = Fetched::new(
+        Some("pro".to_owned()),
+        vec![Window::from_percent("7d", 40.0)],
+    )
+    .into_usage_at(&login.account, fetched_at);
+
+    assert_eq!(usage.account, login.account.id);
+    assert_eq!(usage.plan.as_deref(), Some("pro"));
+    assert_eq!(usage.windows.len(), 1);
+    assert_eq!(usage.headroom(), 60.0);
+    assert_eq!(usage.fetched_at, fetched_at);
 }
