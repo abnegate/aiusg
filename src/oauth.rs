@@ -1,31 +1,20 @@
 #[cfg(feature = "login")]
 mod loopback;
+#[cfg(feature = "login")]
+mod pkce;
 
 use anyhow::{Context, Result};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+#[cfg(feature = "login")]
 use rand::Rng;
-use sha2::{Digest, Sha256};
 
 #[cfg(feature = "login")]
 pub use loopback::Loopback;
+#[cfg(feature = "login")]
+pub use pkce::Pkce;
 
-pub struct Pkce {
-    pub verifier: String,
-    pub challenge: String,
-}
-
-impl Pkce {
-    pub fn generate() -> Self {
-        let verifier = random_token(64);
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        Self {
-            verifier,
-            challenge,
-        }
-    }
-}
-
+#[cfg(feature = "login")]
 pub fn random_token(bytes: usize) -> String {
     let mut buffer = vec![0_u8; bytes];
     rand::rng().fill_bytes(&mut buffer);
