@@ -1,3 +1,5 @@
+//! Cursor, through the session the Cursor app stores.
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -6,7 +8,7 @@ use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, read_json};
 use crate::store::Credential;
 
 const USAGE_URL: &str = "https://cursor.com/api/usage-summary";
@@ -123,6 +125,7 @@ fn subject_of(token: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Reads the monthly request usage for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let response = http
         .get(USAGE_URL)
@@ -133,13 +136,15 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Cursor usage")?;
 
-    let summary: UsageSummary = crate::provider::read_json(response, "Cursor usage").await?;
+    let summary: UsageSummary = read_json(response, "Cursor usage").await?;
     Ok(Fetched {
         plan: summary.membership_type.clone(),
         windows: windows(&summary),
     })
 }
 
+/// Takes the session the Cursor app is signed in with.
+#[cfg(feature = "login")]
 pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
     discover()?
         .into_iter()
@@ -147,6 +152,8 @@ pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
         .context("sign in to the Cursor app first, then run `aiusg login cursor` again")
 }
 
+/// Takes the session the Cursor app holds now, since only the app can renew
+/// it.
 pub async fn refresh(
     _http: &reqwest::Client,
     _credential: &Credential,
@@ -185,6 +192,7 @@ fn decode(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// Finds the session the Cursor app stored in its state database.
 pub fn discover() -> Result<Vec<Discovered>> {
     let Some(path) = database().filter(|path| path.exists()) else {
         return Ok(Vec::new());

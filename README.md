@@ -5,7 +5,7 @@ One place to see how much of your AI subscription you have left.
 Authenticate any number of accounts — including several on the same provider — and
 `aiusg` fetches every account's limits in parallel and prints them as one table.
 
-```
+```text
   Codex     jake@example.com  pro
     7d                     ████████████████████ 100%              resets in 5d 21h
     GPT-5.3-Codex-Spark 5h ░░░░░░░░░░░░░░░░░░░░   0%              resets in 4h 59m
@@ -37,11 +37,15 @@ echo "deb [signed-by=/usr/share/keyrings/abnegate.gpg] https://abnegate.github.i
 sudo apt update && sudo apt install aiusg
 ```
 
-**Binary** from [Releases](https://github.com/abnegate/aiusg/releases), or from source:
+**Binary** from [Releases](https://github.com/abnegate/aiusg/releases), or build it with Cargo:
 
 ```bash
-cargo install --git https://github.com/abnegate/aiusg
+cargo install aiusg
+cargo install --git https://github.com/abnegate/aiusg   # unreleased main
 ```
+
+Installing the binary uses the default features, so it always has every
+provider, sign-in and the MCP server.
 
 ## Use
 
@@ -103,6 +107,85 @@ Or in any client that reads `mcpServers`:
   }
 }
 ```
+
+## Use as a library
+
+The fetchers are a library too. Turn the default features off to leave the CLI,
+its terminal UI and the MCP server out of your build:
+
+```toml
+[dependencies]
+aiusg = { version = "0.5", default-features = false }
+```
+
+With no features you get Claude, Codex, Gemini and Grok usage, credential
+discovery from each provider's own CLI directory, and token refresh. Add only what
+you need:
+
+| Feature | Adds |
+|---|---|
+| `default` | `cli` |
+| `cli` | The `aiusg` binary: table, watch mode and MCP server (`clap`, `crossterm`, `rmcp`, `schemars`), plus every feature below |
+| `login` | Interactive browser sign-in for each provider (`webbrowser`) |
+| `keychain` | The OS keychain credential backend, and reading CLI tokens kept in the keychain (`keyring`) |
+| `copilot` | The Copilot provider, including the Copilot CLI's `~/.copilot/data.db` session store (`rusqlite`) |
+| `cursor` | The Cursor provider, which reads the Cursor app's `state.vscdb` (`rusqlite`) |
+| `grokbot` | The Grok Bot provider; implies `cursor`, whose session it rides on |
+
+A provider left out of the build is still in `Provider::ALL`, and calling it
+returns an error naming the feature that adds it.
+
+The Claude and Codex fetchers have an `_at` variant that takes the API base, so
+you can point them at a proxy or a local mock. The base is an origin, with or
+without a trailing slash; `BASE` is the real one. `claude::fetch_at` reads the
+plan from the account profile too, so it needs no separate `profile_at` call:
+
+```rust,no_run
+use aiusg::model::{Account, Availability, Provider};
+use aiusg::provider::{claude, is_signed_out};
+use aiusg::store::Credential;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let http = reqwest::Client::new();
+    let credential = Credential::bearer(std::env::var("CLAUDE_ACCESS_TOKEN")?);
+    let account = Account::new(Provider::Claude, "jake@example.com", None);
+
+    match claude::fetch_at(&http, claude::BASE, &credential).await {
+        Ok(fetched) => {
+            let usage = fetched.into_usage(&account);
+            for window in &usage.windows {
+                let used = window
+                    .used_percent
+                    .map_or_else(|| "unknown".to_owned(), |percent| format!("{percent:.0}%"));
+                let resets = window
+                    .resets_at
+                    .map_or_else(|| "no reset reported".to_owned(), |at| format!("resets {at}"));
+                println!("{}: {used} used, {resets}", window.name);
+            }
+            match usage.availability() {
+                Availability::Now => println!("{:.0}% headroom", usage.headroom()),
+                Availability::At(time) => println!("spent until {time}"),
+                Availability::Unknown => println!("spent, with no reset reported"),
+            }
+        }
+        Err(error) if is_signed_out(&error) => eprintln!("the token was refused; sign in again"),
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+```
+
+`claude::discover_in`, `codex::discover_in` and `grok::discover_in` read the
+credential a provider's CLI stored in that CLI's own directory, the one
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME` names (such as `~/.codex`),
+not the user's home. A missing or blank credentials file gives no logins, and
+one that cannot be read or parsed is an error. `Fetched::into_usage` turns a
+fetch into the same `Usage` the CLI ranks, with `headroom()` and
+`availability()`; `into_usage_at` takes the fetch time instead of using now.
+`is_signed_out` tells a refused token (a 401 or 403 anywhere in the error
+chain) apart from any other failure. Set `AIUSG_DEBUG=1` in the calling process to
+print every raw provider response, with its HTTP status, to stderr.
 
 ## Providers
 
@@ -214,11 +297,16 @@ provider. Use `aiusg login` for the rest.
 Publishing a GitHub Release is the whole process. The tag sets `package.version`
 and refreshes `Cargo.lock` (committed back to `main` when the release is its
 tip), builds macOS and Linux binaries for both architectures, attaches them and
-the `.deb` packages to the release, then updates the Homebrew tap and the APT
-repo. Nothing needs bumping by hand before cutting the tag. Prerelease tags —
-any tag containing `-` — build and attach binaries but skip both publish steps.
+the `.deb` packages to the release, updates the Homebrew tap and the APT repo,
+and publishes the crate to crates.io. Nothing needs bumping by hand before
+cutting the tag. Prerelease tags — any tag containing `-` — build and attach
+binaries but skip every publish step.
 
-The publish jobs need four secrets on this repo: `HOMEBREW_TAP_DEPLOY_KEY` and
+The crates.io job needs `CARGO_REGISTRY_TOKEN`, a crates.io API token scoped to
+publishing `aiusg`. Without it, or when that version is already on crates.io,
+the job skips with a notice rather than failing the release.
+
+The Homebrew and APT jobs need four more secrets: `HOMEBREW_TAP_DEPLOY_KEY` and
 `APT_REPO_DEPLOY_KEY`, write deploy keys for `abnegate/homebrew-tap` and
 `abnegate/apt-repo`, plus `APT_GPG_PRIVATE_KEY` and `APT_GPG_KEY_ID` for signing
 the APT `Release` file. Deploy keys rather than a personal access token: each

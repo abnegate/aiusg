@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -17,6 +24,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -39,3 +48,63 @@ jobs:
 
       - name: Build
         run: cargo build --release
+
+  library:
+    name: library (${{ matrix.features || 'no features' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ['', login, keychain, copilot, cursor, grokbot]
+    env:
+      FEATURES: ${{ matrix.features }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: library-${{ matrix.features }}
+
+      - name: Install Secret Service
+        if: matrix.features == '' || matrix.features == 'keychain'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Build
+        run: cargo build --locked --no-default-features --features "$FEATURES"
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --no-default-features --features "$FEATURES" -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --no-default-features --features "$FEATURES"
+
+      - name: Docs
+        if: matrix.features == ''
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --no-default-features
+
+      - name: Docs with every feature
+        if: matrix.features == ''
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --no-deps --all-features
+
+      - name: No CLI dependencies without default features
+        if: matrix.features == ''
+        run: |
+          tree="$(cargo tree --locked --no-default-features --target all -e normal)"
+          if grep -E 'crossterm|webbrowser|rusqlite|keyring|clap|rmcp|schemars|[[:space:]](rand|sha2|futures) v' <<<"$tree"; then
+            echo "::error::the library build pulls in a CLI-only dependency"
+            exit 1
+          fi
+
+      - name: Package
+        if: matrix.features == ''
+        run: cargo publish --locked --dry-run

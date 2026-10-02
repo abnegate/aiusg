@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+//! Gemini Code Assist, through the Google login that the Gemini CLI stores.
+
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, TimeZone, Utc};
@@ -6,16 +8,24 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::model::{Account, Provider, Window};
+#[cfg(feature = "login")]
 use crate::oauth::{Loopback, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, home, load, read_json};
 use crate::store::Credential;
 
 const CODE_ASSIST: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const HOME_DIRECTORY: &str = ".gemini";
+const HOME_ENV: &str = "GEMINI_CLI_HOME";
+const CREDENTIALS_FILE: &str = "oauth_creds.json";
+const ACCOUNTS_FILE: &str = "google_accounts.json";
 const CLIENT_ID_ENV: &str = "AIUSG_GEMINI_CLIENT_ID";
 const CLIENT_SECRET_ENV: &str = "AIUSG_GEMINI_CLIENT_SECRET";
+#[cfg(feature = "login")]
 const SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 4] = [8085, 8086, 8087, 0];
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"), " (GeminiCLI)");
 const PROJECT: &str = "project";
@@ -83,7 +93,7 @@ impl Bucket {
     }
 }
 
-async fn load(http: &reqwest::Client, credential: &Credential) -> Result<LoadResponse> {
+async fn profile(http: &reqwest::Client, credential: &Credential) -> Result<LoadResponse> {
     let response = http
         .post(format!("{CODE_ASSIST}:loadCodeAssist"))
         .header(
@@ -102,11 +112,12 @@ async fn load(http: &reqwest::Client, credential: &Credential) -> Result<LoadRes
         .await
         .context("requesting the Gemini Code Assist profile")?;
 
-    crate::provider::read_json(response, "Gemini profile").await
+    read_json(response, "Gemini profile").await
 }
 
+/// Reads the plan and per-model request quotas for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
-    let loaded = load(http, credential).await?;
+    let loaded = profile(http, credential).await?;
     let plan = loaded
         .paid_tier
         .as_ref()
@@ -137,7 +148,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Gemini quota")?;
 
-    let quota: QuotaResponse = crate::provider::read_json(response, "Gemini quota").await?;
+    let quota: QuotaResponse = read_json(response, "Gemini quota").await?;
     Ok(Fetched {
         plan,
         windows: quota
@@ -170,6 +181,8 @@ impl TokenResponse {
     }
 }
 
+/// Signs in to Google in the browser and returns the new login.
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let client = client()?;
     let state = random_token(32);
@@ -225,6 +238,7 @@ pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     })
 }
 
+#[cfg(feature = "login")]
 async fn email(http: &reqwest::Client, credential: &Credential) -> Option<String> {
     #[derive(Deserialize)]
     struct Info {
@@ -246,6 +260,8 @@ async fn email(http: &reqwest::Client, credential: &Credential) -> Option<String
     info.email
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -312,33 +328,31 @@ fn client() -> Result<Client> {
     Ok(Client { id, secret })
 }
 
-fn home() -> Option<PathBuf> {
-    match std::env::var_os("GEMINI_CLI_HOME") {
-        Some(directory) => Some(PathBuf::from(directory)),
-        None => Some(dirs::home_dir()?.join(".gemini")),
+/// Finds the login the Gemini CLI stored, as [`discover_in`] reads it from
+/// the Gemini home.
+pub fn discover() -> Result<Vec<Discovered>> {
+    match home(HOME_ENV, HOME_DIRECTORY) {
+        Some(directory) => discover_in(&directory),
+        None => Ok(Vec::new()),
     }
 }
 
-pub fn discover() -> Result<Vec<Discovered>> {
-    let Some(home) = home() else {
+/// Reads the login that the Gemini CLI stored in `directory`, its own home:
+/// the one `GEMINI_CLI_HOME` names, `~/.gemini` by default, not the user's
+/// home.
+///
+/// The Gemini CLI stores one login per directory, so the list holds at most
+/// one. A missing or blank file gives an empty list; a file that cannot be read
+/// or parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: Option<StoredCredentials> = load(&directory.join(CREDENTIALS_FILE))?;
+    let Some(stored) = stored.filter(|stored| !stored.access_token.is_empty()) else {
         return Ok(Vec::new());
     };
-    let path = home.join("oauth_creds.json");
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
 
-    let raw =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let stored: StoredCredentials =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-    if stored.access_token.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let label = std::fs::read_to_string(home.join("google_accounts.json"))
+    let label = load::<StoredAccounts>(&directory.join(ACCOUNTS_FILE))
         .ok()
-        .and_then(|raw| serde_json::from_str::<StoredAccounts>(&raw).ok())
+        .flatten()
         .and_then(|accounts| accounts.active)
         .unwrap_or_else(|| "gemini".to_owned());
 
@@ -405,5 +419,83 @@ mod tests {
     fn empty_bucket_maps_to_nothing() {
         let bucket: Bucket = serde_json::from_str(r#"{"modelId":"gemini-2.5-flash"}"#).unwrap();
         assert!(bucket.into_window().is_none());
+    }
+
+    fn home_with(credentials: &str) -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(CREDENTIALS_FILE), credentials).unwrap();
+        home
+    }
+
+    #[test]
+    fn discover_in_reads_the_credentials_of_the_home_it_is_given() {
+        let home = home_with(
+            r#"{"access_token":"ya29.gemini","refresh_token":"1//refresh","expiry_date":1790000000000,"token_type":"Bearer"}"#,
+        );
+        std::fs::write(
+            home.path().join(ACCOUNTS_FILE),
+            r#"{"active":"jake@example.com","old":[]}"#,
+        )
+        .unwrap();
+
+        let found = discover_in(home.path()).unwrap();
+
+        assert_eq!(found.len(), 1);
+        let discovered = &found[0];
+        assert_eq!(discovered.account.provider, Provider::Gemini);
+        assert_eq!(discovered.account.label, "jake@example.com");
+        assert_eq!(discovered.credential.access_token, "ya29.gemini");
+        assert_eq!(
+            discovered.credential.refresh_token.as_deref(),
+            Some("1//refresh")
+        );
+        assert_eq!(
+            discovered.credential.expires_at,
+            Utc.timestamp_millis_opt(1790000000000).single()
+        );
+    }
+
+    #[test]
+    fn discover_in_labels_a_login_without_an_active_account_gemini() {
+        let home = home_with(r#"{"access_token":"ya29.gemini"}"#);
+        std::fs::write(home.path().join(ACCOUNTS_FILE), "").unwrap();
+
+        let found = discover_in(home.path()).unwrap();
+
+        assert_eq!(found[0].account.label, "gemini");
+        assert!(found[0].credential.expires_at.is_none());
+    }
+
+    #[test]
+    fn discover_in_a_home_without_credentials_finds_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(discover_in(home.path()).unwrap().is_empty());
+        assert!(
+            discover_in(&home.path().join("never-created"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn discover_in_skips_an_empty_token_and_a_blank_file() {
+        let empty = home_with(r#"{"access_token":""}"#);
+        assert!(discover_in(empty.path()).unwrap().is_empty());
+
+        let blank = home_with("  \n");
+        assert!(
+            discover_in(blank.path()).unwrap().is_empty(),
+            "a blank file holds no login"
+        );
+    }
+
+    #[test]
+    fn discover_in_fails_on_unparsable_credentials() {
+        let home = home_with("{\"access_token\":");
+        let error = discover_in(home.path()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(CREDENTIALS_FILE),
+            "the error names the file: {error:#}"
+        );
     }
 }

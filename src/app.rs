@@ -49,7 +49,7 @@ pub fn order(reports: &mut [Report], sort: Sort) {
 async fn report_for(store: &Store, http: &reqwest::Client, account: &Account) -> Report {
     match usage_for(store, http, account).await {
         Ok(usage) => Report::Ok(usage),
-        Err(error) if error.downcast_ref::<provider::SignedOut>().is_some() => Report::SignedOut {
+        Err(error) if provider::is_signed_out(&error) => Report::SignedOut {
             account: account.id.clone(),
             provider: account.provider,
             label: account.label.clone(),
@@ -66,15 +66,7 @@ async fn report_for(store: &Store, http: &reqwest::Client, account: &Account) ->
 async fn usage_for(store: &Store, http: &reqwest::Client, account: &Account) -> Result<Usage> {
     let credential = ensure_fresh(store, http, account).await?;
     let fetched = provider::fetch(account.provider, http, &credential).await?;
-
-    Ok(Usage {
-        account: account.id.clone(),
-        provider: account.provider,
-        label: account.label.clone(),
-        plan: fetched.plan.or_else(|| account.plan.clone()),
-        windows: fetched.windows,
-        fetched_at: Utc::now(),
-    })
+    Ok(fetched.into_usage(account))
 }
 
 async fn ensure_fresh(

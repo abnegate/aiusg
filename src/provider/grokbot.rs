@@ -1,3 +1,5 @@
+//! Grok Bot, through the session the Grok Bot app stores.
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -7,7 +9,7 @@ use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
 use crate::oauth::decode_jwt_claims;
-use crate::provider::{Discovered, Fetched, cursor};
+use crate::provider::{Discovered, Fetched, cursor, read_json};
 use crate::store::Credential;
 
 const USAGE_URL: &str = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus";
@@ -37,6 +39,7 @@ struct UsageStatus {
     included_usage_super_grok_plan: Option<String>,
 }
 
+/// Reads the included and on-demand usage for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let mut request = http
         .post(USAGE_URL)
@@ -56,7 +59,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
 
     let response = request.send().await.context("requesting Grok Bot usage")?;
 
-    let status: UsageStatus = crate::provider::read_json(response, "Grok Bot usage").await?;
+    let status: UsageStatus = read_json(response, "Grok Bot usage").await?;
 
     Ok(Fetched {
         plan: plan(&status),
@@ -85,6 +88,8 @@ fn windows(status: &UsageStatus) -> Vec<Window> {
     ]
 }
 
+/// Takes the session the Grok Bot app is signed in with.
+#[cfg(feature = "login")]
 pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
     discover()?
         .into_iter()
@@ -92,6 +97,8 @@ pub async fn login(_http: &reqwest::Client) -> Result<Discovered> {
         .context("sign in to the Grok Bot app first, then run `aiusg login grokbot` again")
 }
 
+/// Takes the session the Grok Bot app holds now, since only the app can renew
+/// it.
 pub async fn refresh(
     _http: &reqwest::Client,
     credential: &Credential,
@@ -199,6 +206,8 @@ fn label(credential: &Credential) -> String {
         .unwrap_or_else(|| "grokbot".to_owned())
 }
 
+/// Finds the sessions the Grok Bot app stored, falling back to the Cursor
+/// session it shares.
 pub fn discover() -> Result<Vec<Discovered>> {
     let stored = match secrets_path().filter(|path| path.exists()) {
         Some(path) => {

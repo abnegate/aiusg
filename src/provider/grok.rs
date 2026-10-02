@@ -1,22 +1,34 @@
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+//! Grok, through the xAI login that the Grok CLI stores.
 
-use anyhow::{Context, Result, bail};
+use std::collections::BTreeMap;
+use std::path::Path;
+
+#[cfg(feature = "login")]
+use anyhow::bail;
+use anyhow::{Context, Result};
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::model::{Account, Provider, Window};
-use crate::oauth::{Loopback, Pkce, decode_jwt_claims, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched};
+use crate::oauth::decode_jwt_claims;
+#[cfg(feature = "login")]
+use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
+use crate::provider::{Discovered, Fetched, home, load, read_json};
 use crate::store::Credential;
 
+const AUTH_FILE: &str = "auth.json";
+const HOME_DIRECTORY: &str = ".grok";
+const HOME_ENV: &str = "GROK_HOME";
 const DEFAULT_BASE: &str = "https://cli-chat-proxy.grok.com/v1";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://auth.x.ai/oauth2/authorize";
 const TOKEN_URL: &str = "https://auth.x.ai/oauth2/token";
 const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+#[cfg(feature = "login")]
 const SCOPES: &str = "openid profile email offline_access grok-cli:access api:access \
      conversations:read conversations:write workspaces:read workspaces:write";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 4] = [8111, 8112, 8113, 0];
 const TOKEN_AUTH: &str = "xai-grok-cli";
 const USER_AGENT: &str = concat!("aiusg/", env!("CARGO_PKG_VERSION"));
@@ -83,6 +95,7 @@ struct Settings {
     subscription_tier_display: Option<String>,
 }
 
+/// Reads the credit usage and plan for `credential`.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
     let base = base();
     let response = http
@@ -98,7 +111,7 @@ pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fe
         .await
         .context("requesting Grok billing")?;
 
-    let envelope: BillingEnvelope = crate::provider::read_json(response, "Grok billing").await?;
+    let envelope: BillingEnvelope = read_json(response, "Grok billing").await?;
     let windows = windows(envelope.config);
 
     Ok(Fetched {
@@ -182,6 +195,8 @@ fn jwt_tier(credential: &Credential) -> Option<String> {
     Some(format!("tier {tier}"))
 }
 
+/// Signs in to xAI in the browser and returns the new login.
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
     let state = random_token(32);
@@ -235,6 +250,7 @@ pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     })
 }
 
+#[cfg(feature = "login")]
 fn identify(credential: &Credential) -> Option<String> {
     let claims = decode_jwt_claims(&credential.access_token).ok()?;
     claims
@@ -265,6 +281,8 @@ impl TokenResponse {
     }
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -313,22 +331,23 @@ struct StoredAccount {
     expires_at: Option<DateTime<Utc>>,
 }
 
-fn auth_path() -> Option<PathBuf> {
-    let base = match std::env::var_os("GROK_HOME") {
-        Some(directory) => PathBuf::from(directory),
-        None => dirs::home_dir()?.join(".grok"),
-    };
-    Some(base.join("auth.json"))
+/// Finds the logins the Grok CLI stored, as [`discover_in`] reads them from
+/// the Grok home.
+pub fn discover() -> Result<Vec<Discovered>> {
+    match home(HOME_ENV, HOME_DIRECTORY) {
+        Some(directory) => discover_in(&directory),
+        None => Ok(Vec::new()),
+    }
 }
 
-pub fn discover() -> Result<Vec<Discovered>> {
-    let Some(path) = auth_path().filter(|path| path.exists()) else {
-        return Ok(Vec::new());
-    };
-    let raw =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+/// Reads every login that the Grok CLI stored in `directory`, its own home: the
+/// one `GROK_HOME` names, `~/.grok` by default, not the user's home.
+///
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
     let stored: BTreeMap<String, StoredAccount> =
-        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+        load(&directory.join(AUTH_FILE))?.unwrap_or_default();
 
     let mut found = Vec::new();
     for (issuer, account) in stored {
@@ -407,6 +426,61 @@ mod tests {
         assert_eq!(windows[0].used_percent, Some(42.0));
     }
 
+    fn home_with(auth: &str) -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(AUTH_FILE), auth).unwrap();
+        home
+    }
+
+    #[test]
+    fn discover_in_reads_every_account_in_the_home_it_is_given() {
+        let home = home_with(
+            r#"{"https://auth.x.ai::user-1":{"key":"grok-key-1","email":"jake@example.com","user_id":"user-1","team_id":"team-1","refresh_token":"grok-refresh","expires_at":"2026-10-02T00:00:00Z"},"https://auth.x.ai::user-2":{"key":"grok-key-2"}}"#,
+        );
+
+        let found = discover_in(home.path()).unwrap();
+
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].account.label, "jake@example.com");
+        assert_eq!(found[0].credential.access_token, "grok-key-1");
+        assert_eq!(found[0].credential.get(TEAM_ID), Some("team-1"));
+        assert_eq!(found[0].credential.get(USER_ID), Some("user-1"));
+        assert!(found[0].credential.expires_at.is_some());
+        assert_eq!(
+            found[1].account.label, "user-2",
+            "an account without an email is labelled by its issuer suffix"
+        );
+    }
+
+    #[test]
+    fn discover_in_a_home_without_auth_finds_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(discover_in(home.path()).unwrap().is_empty());
+        assert!(
+            discover_in(&home.path().join("never-created"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn discover_in_skips_an_empty_token() {
+        let home = home_with(
+            r#"{"https://auth.x.ai::user-1":{"key":""},"https://auth.x.ai::user-2":{"email":"x@example.com"}}"#,
+        );
+        assert!(discover_in(home.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn discover_in_fails_on_unparsable_auth() {
+        let home = home_with("[1, 2");
+        let error = discover_in(home.path()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(AUTH_FILE),
+            "the error names the file: {error:#}"
+        );
+    }
+
     #[test]
     fn prefers_absolute_counts_when_present() {
         let envelope: BillingEnvelope = serde_json::from_str(
@@ -420,7 +494,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "login"))]
 mod scope_tests {
     use super::SCOPES;
 

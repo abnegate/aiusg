@@ -1,23 +1,44 @@
-use std::path::PathBuf;
+//! Claude, through the OAuth login that Claude Code stores.
 
-use anyhow::{Context, Result, bail};
+mod profile;
+mod profile_account;
+mod profile_organization;
+
+use std::path::Path;
+
+#[cfg(feature = "login")]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
+#[cfg(feature = "keychain")]
 use sha2::{Digest, Sha256};
 
 use crate::model::{Account, Provider, Window};
+#[cfg(feature = "login")]
 use crate::oauth::{Loopback, Pkce, prompt_open, random_token};
-use crate::provider::{Discovered, Fetched};
+use crate::provider::{Discovered, Fetched, endpoint, home, load, read_json};
 use crate::store::Credential;
 
-const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
-const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
+pub use profile::Profile;
+pub use profile_account::ProfileAccount;
+pub use profile_organization::ProfileOrganization;
+
+/// The origin of the Claude API that [`fetch`] and [`profile`] read from.
+pub const BASE: &str = "https://api.anthropic.com";
+const USAGE_PATH: &str = "/api/oauth/usage";
+const PROFILE_PATH: &str = "/api/oauth/profile";
+const CREDENTIALS_FILE: &str = ".credentials.json";
+const CONFIG_DIRECTORY: &str = ".claude";
+const CONFIG_ENV: &str = "CLAUDE_CONFIG_DIR";
+#[cfg(feature = "login")]
 const AUTHORIZE_URL: &str = "https://claude.com/cai/oauth/authorize";
 const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 const SCOPES: &str =
     "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+#[cfg(feature = "login")]
 const CALLBACK_PORTS: [u16; 4] = [54545, 54546, 54547, 0];
 const USER_AGENT: &str = "claude-code/2.1.251";
 
@@ -79,34 +100,6 @@ struct ExtraUsage {
     used_credits: Option<f64>,
     #[serde(default)]
     utilization: Option<f64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct Profile {
-    #[serde(default)]
-    account: Option<ProfileAccount>,
-    #[serde(default)]
-    organization: Option<ProfileOrganization>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ProfileAccount {
-    #[serde(default)]
-    email: Option<String>,
-    #[serde(default)]
-    display_name: Option<String>,
-    #[serde(default)]
-    full_name: Option<String>,
-    #[serde(default)]
-    uuid: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct ProfileOrganization {
-    #[serde(default)]
-    rate_limit_tier: Option<String>,
-    #[serde(default)]
-    billing_type: Option<String>,
 }
 
 impl Limit {
@@ -171,46 +164,74 @@ fn windows(usage: UsageResponse) -> Vec<Window> {
     windows
 }
 
+/// Reads the usage windows and plan for `credential` from [`BASE`], as
+/// [`fetch_at`] does.
 pub async fn fetch(http: &reqwest::Client, credential: &Credential) -> Result<Fetched> {
-    let response = request(http, credential, USAGE_URL)
-        .send()
-        .await
-        .context("requesting Claude usage")?;
-    let usage: UsageResponse = crate::provider::read_json(response, "Claude usage").await?;
+    fetch_at(http, BASE, credential).await
+}
+
+/// Reads the usage windows for `credential` from `base`, along with the plan
+/// from the account profile.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// The plan is `None` when the profile cannot be read, so a profile failure
+/// never fails the fetch and a caller needs no separate [`profile_at`] for the
+/// plan. A refused token is an error that [`is_signed_out`] recognises.
+///
+/// [`is_signed_out`]: crate::provider::is_signed_out
+pub async fn fetch_at(
+    http: &reqwest::Client,
+    base: &str,
+    credential: &Credential,
+) -> Result<Fetched> {
+    let usage = usage_at(http, base, &credential.access_token);
+    let profile = async { anyhow::Ok(profile_at(http, base, &credential.access_token).await.ok()) };
+    let (usage, profile) = tokio::try_join!(usage, profile)?;
 
     Ok(Fetched {
-        plan: plan(http, credential).await,
+        plan: profile.and_then(|profile| profile.plan().map(str::to_owned)),
         windows: windows(usage),
     })
 }
 
-fn request(http: &reqwest::Client, credential: &Credential, url: &str) -> reqwest::RequestBuilder {
+async fn usage_at(http: &reqwest::Client, base: &str, access_token: &str) -> Result<UsageResponse> {
+    let response = request(http, access_token, &endpoint(base, USAGE_PATH))
+        .send()
+        .await
+        .context("requesting Claude usage")?;
+    read_json(response, "Claude usage").await
+}
+
+/// Reads the account profile for `access_token` from [`BASE`].
+pub async fn profile(http: &reqwest::Client, access_token: &str) -> Result<Profile> {
+    profile_at(http, BASE, access_token).await
+}
+
+/// Reads the account profile for `access_token` from `base`.
+///
+/// `base` is an origin such as [`BASE`], with or without a trailing slash.
+///
+/// [`fetch_at`] already carries the profile's plan; this is for the account
+/// label, or for the profile on its own.
+pub async fn profile_at(http: &reqwest::Client, base: &str, access_token: &str) -> Result<Profile> {
+    let response = request(http, access_token, &endpoint(base, PROFILE_PATH))
+        .send()
+        .await
+        .context("requesting the Claude profile")?;
+    read_json(response, "Claude profile").await
+}
+
+fn request(http: &reqwest::Client, access_token: &str, url: &str) -> reqwest::RequestBuilder {
     http.get(url)
-        .header(
-            "Authorization",
-            format!("Bearer {}", credential.access_token),
-        )
+        .header("Authorization", format!("Bearer {access_token}"))
         .header("anthropic-beta", OAUTH_BETA)
         .header("Content-Type", "application/json")
         .header("User-Agent", USER_AGENT)
 }
 
-async fn profile(http: &reqwest::Client, credential: &Credential) -> Option<Profile> {
-    request(http, credential, PROFILE_URL)
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()
-}
-
-async fn plan(http: &reqwest::Client, credential: &Credential) -> Option<String> {
-    let profile = profile(http, credential).await?;
-    let organization = profile.organization?;
-    organization.rate_limit_tier.or(organization.billing_type)
-}
-
+/// Signs in to Claude in the browser and returns the new login.
+#[cfg(feature = "login")]
 pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
     let pkce = Pkce::generate();
     let state = random_token(32);
@@ -258,25 +279,15 @@ pub async fn login(http: &reqwest::Client) -> Result<Discovered> {
         .context("parsing the Claude token response")?;
 
     let credential = token.into_credential();
-    let label = identify(http, &credential).await;
+    let label = profile(http, &credential.access_token)
+        .await
+        .ok()
+        .and_then(|profile| profile.label().map(str::to_owned))
+        .unwrap_or_else(|| "claude".to_owned());
     Ok(Discovered {
         account: Account::new(Provider::Claude, label, None),
         credential,
     })
-}
-
-async fn identify(http: &reqwest::Client, credential: &Credential) -> String {
-    profile(http, credential)
-        .await
-        .and_then(|profile| profile.account)
-        .and_then(|account| {
-            account
-                .email
-                .or(account.display_name)
-                .or(account.full_name)
-                .or_else(|| account.uuid.map(|uuid| uuid.chars().take(8).collect()))
-        })
-        .unwrap_or_else(|| "claude".to_owned())
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,6 +312,8 @@ impl TokenResponse {
     }
 }
 
+/// Exchanges the refresh token of `credential` for a new credential, or
+/// `None` when it holds no refresh token.
 pub async fn refresh(
     http: &reqwest::Client,
     credential: &Credential,
@@ -353,17 +366,37 @@ struct StoredOauth {
     rate_limit_tier: Option<String>,
 }
 
+/// Finds the login Claude Code stored: in the keychain when it holds one,
+/// otherwise as [`discover_in`] reads it from the configuration directory.
 pub fn discover() -> Result<Vec<Discovered>> {
-    let stored = keychain_credentials()
-        .or_else(fallback_file_credentials)
-        .unwrap_or_default();
-
-    let Some(oauth) = stored.and_then(|stored| stored.claude_ai_oauth) else {
-        return Ok(Vec::new());
-    };
-    if oauth.access_token.is_empty() {
-        return Ok(Vec::new());
+    if let Some(stored) = keychain_credentials() {
+        return Ok(stored.map(discovered).unwrap_or_default());
     }
+    match home(CONFIG_ENV, CONFIG_DIRECTORY) {
+        Some(directory) => discover_in(&directory),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Reads the login that Claude Code stored in `directory`, its configuration
+/// directory: the one `CLAUDE_CONFIG_DIR` names, `~/.claude` by default, not
+/// the user's home.
+///
+/// Claude Code stores one login per directory, so the list holds at most one.
+/// A missing or blank file gives an empty list; a file that cannot be read or
+/// parsed is an error.
+pub fn discover_in(directory: &Path) -> Result<Vec<Discovered>> {
+    let stored: Option<StoredCredentials> = load(&directory.join(CREDENTIALS_FILE))?;
+    Ok(stored.map(discovered).unwrap_or_default())
+}
+
+fn discovered(stored: StoredCredentials) -> Vec<Discovered> {
+    let Some(oauth) = stored
+        .claude_ai_oauth
+        .filter(|oauth| !oauth.access_token.is_empty())
+    else {
+        return Vec::new();
+    };
 
     let plan = oauth
         .rate_limit_tier
@@ -374,7 +407,7 @@ pub fn discover() -> Result<Vec<Discovered>> {
         .map(|plan| format!("cli ({plan})"))
         .unwrap_or_else(|| "cli".to_owned());
 
-    Ok(vec![Discovered {
+    vec![Discovered {
         account: Account::new(Provider::Claude, label, plan),
         credential: Credential {
             access_token: oauth.access_token,
@@ -385,11 +418,12 @@ pub fn discover() -> Result<Vec<Discovered>> {
                 .and_then(|millis| Utc.timestamp_millis_opt(millis).single()),
             extra: Default::default(),
         },
-    }])
+    }]
 }
 
+#[cfg(feature = "keychain")]
 fn keychain_service() -> String {
-    match std::env::var("CLAUDE_CONFIG_DIR") {
+    match std::env::var(CONFIG_ENV) {
         Ok(directory) if !directory.is_empty() => {
             let digest = Sha256::digest(directory.as_bytes());
             let hash: String = digest
@@ -405,6 +439,7 @@ fn keychain_service() -> String {
     }
 }
 
+#[cfg(feature = "keychain")]
 fn keychain_credentials() -> Option<Option<StoredCredentials>> {
     let user = std::env::var("USER").ok()?;
     let raw = keyring::Entry::new(&keychain_service(), &user)
@@ -414,17 +449,9 @@ fn keychain_credentials() -> Option<Option<StoredCredentials>> {
     Some(serde_json::from_str(&raw).ok())
 }
 
-fn fallback_path() -> Option<PathBuf> {
-    let base = match std::env::var_os("CLAUDE_CONFIG_DIR") {
-        Some(directory) => PathBuf::from(directory),
-        None => dirs::home_dir()?.join(".claude"),
-    };
-    Some(base.join(".credentials.json"))
-}
-
-fn fallback_file_credentials() -> Option<Option<StoredCredentials>> {
-    let raw = std::fs::read_to_string(fallback_path()?).ok()?;
-    Some(serde_json::from_str(&raw).ok())
+#[cfg(not(feature = "keychain"))]
+fn keychain_credentials() -> Option<Option<StoredCredentials>> {
+    None
 }
 
 #[cfg(test)]
@@ -485,21 +512,68 @@ mod tests {
         assert_eq!(windows[0].used_percent, Some(12.5));
     }
 
-    #[test]
-    fn the_profile_is_read_from_its_nested_shape() {
-        let profile: Profile = serde_json::from_str(
-            r#"{"account":{"uuid":"abc12345-ffff","email":"jake@example.com","display_name":"Jake"},"organization":{"rate_limit_tier":"default_claude_max_20x","billing_type":"stripe"}}"#,
-        )
-        .expect("profile should parse");
+    fn directory_with(credentials: &str) -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join(CREDENTIALS_FILE), credentials).unwrap();
+        directory
+    }
 
+    #[test]
+    fn discover_in_reads_the_credentials_file_of_the_directory_it_is_given() {
+        let directory = directory_with(
+            r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-token","refreshToken":"sk-ant-ort01-refresh","expiresAt":1790000000000,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}"#,
+        );
+
+        let found = discover_in(directory.path()).unwrap();
+
+        assert_eq!(found.len(), 1);
+        let discovered = &found[0];
+        assert_eq!(discovered.account.provider, Provider::Claude);
         assert_eq!(
-            profile.account.unwrap().email.as_deref(),
-            Some("jake@example.com"),
-            "the account label comes from account.email, not a flat field"
+            discovered.account.plan.as_deref(),
+            Some("default_claude_max_20x"),
+            "the rate limit tier wins over the subscription type"
+        );
+        assert_eq!(discovered.credential.access_token, "sk-ant-oat01-token");
+        assert_eq!(
+            discovered.credential.refresh_token.as_deref(),
+            Some("sk-ant-ort01-refresh")
         );
         assert_eq!(
-            profile.organization.unwrap().rate_limit_tier.as_deref(),
-            Some("default_claude_max_20x")
+            discovered.credential.expires_at,
+            Utc.timestamp_millis_opt(1_790_000_000_000).single(),
+            "expiresAt is in milliseconds"
+        );
+    }
+
+    #[test]
+    fn discover_in_a_directory_without_credentials_finds_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(discover_in(directory.path()).unwrap().is_empty());
+        assert!(
+            discover_in(&directory.path().join("never-created"))
+                .unwrap()
+                .is_empty(),
+            "a directory that does not exist yet is not an error"
+        );
+    }
+
+    #[test]
+    fn discover_in_skips_an_empty_token() {
+        let directory = directory_with(r#"{"claudeAiOauth":{"accessToken":""}}"#);
+        assert!(discover_in(directory.path()).unwrap().is_empty());
+
+        let signed_out = directory_with("{}");
+        assert!(discover_in(signed_out.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn discover_in_fails_on_unparsable_credentials() {
+        let directory = directory_with("{\"claudeAiOauth\":");
+        let error = discover_in(directory.path()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(CREDENTIALS_FILE),
+            "the error names the file: {error:#}"
         );
     }
 }
